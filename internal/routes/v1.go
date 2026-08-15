@@ -23,5 +23,6 @@ func registerV1(
 		r.Post("/users/sync", users.Sync)
 		r.Get("/catalogue", catalogue.List)
 		r.Get("/catalogue/overview", catalogue.Overview)
+		r.Get("/catalogue/{id}", catalogue.Get)
 	})
 }

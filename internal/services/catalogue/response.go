@@ -7,6 +7,10 @@ type ListResponse struct {
 	Total  int                    `json:"total"`
 }
 
+type GetResponse struct {
+	Model model.ModelCatalogue `json:"model"`
+}
+
 // Highlight is the leading model for a tag, plus how many models carry it.
 type Highlight struct {
 	Tag   string                `json:"tag"`

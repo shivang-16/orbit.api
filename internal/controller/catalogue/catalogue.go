@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/go-chi/chi/v5"
+
 	catalogueService "github.com/shivang-16/orbit.api/internal/services/catalogue"
 )
 
@@ -21,6 +23,20 @@ func (c *Controller) List(w http.ResponseWriter, r *http.Request) {
 	resp, err := c.service.List(r.Context(), tag)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list models"})
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (c *Controller) Get(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	resp, err := c.service.Get(r.Context(), id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to load model"})
+		return
+	}
+	if resp == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "model not found"})
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)

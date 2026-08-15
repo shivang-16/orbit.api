@@ -30,6 +30,21 @@ func (s *Service) List(ctx context.Context, tag string) (*ListResponse, error) {
 	return &ListResponse{Models: models, Total: len(models)}, nil
 }
 
+func (s *Service) Get(ctx context.Context, id string) (*GetResponse, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, nil
+	}
+	item, err := s.catalogue.GetByID(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("get catalogue model: %w", err)
+	}
+	if item == nil {
+		return nil, nil
+	}
+	return &GetResponse{Model: *item}, nil
+}
+
 func (s *Service) Overview(ctx context.Context) (*OverviewResponse, error) {
 	models, err := s.catalogue.ListActive(ctx, "")
 	if err != nil {
