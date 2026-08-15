@@ -4,9 +4,16 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	healthController "github.com/shivang-16/orbit.api/internal/controller/health"
+	userController "github.com/shivang-16/orbit.api/internal/controller/user"
+	authMiddleware "github.com/shivang-16/orbit.api/internal/middleware/auth"
 )
 
-func registerV1(r chi.Router, health *healthController.Controller) {
+func registerV1(r chi.Router, health *healthController.Controller, users *userController.Controller) {
 	r.Get("/health", health.Check)
 	r.Get("/ready", health.Ready)
+
+	r.Group(func(r chi.Router) {
+		r.Use(authMiddleware.Clerk)
+		r.Post("/users/sync", users.Sync)
+	})
 }

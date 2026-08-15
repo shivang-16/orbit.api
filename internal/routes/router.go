@@ -10,9 +10,10 @@ import (
 
 	"github.com/shivang-16/orbit.api/internal/config"
 	healthController "github.com/shivang-16/orbit.api/internal/controller/health"
+	userController "github.com/shivang-16/orbit.api/internal/controller/user"
 )
 
-func New(cfg config.Config, health *healthController.Controller) http.Handler {
+func New(cfg config.Config, health *healthController.Controller, users *userController.Controller) http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(middleware.RequestID)
@@ -33,7 +34,7 @@ func New(cfg config.Config, health *healthController.Controller) http.Handler {
 	r.Get("/ready", health.Ready)
 
 	r.Route("/api/v1", func(r chi.Router) {
-		registerV1(r, health)
+		registerV1(r, health, users)
 	})
 
 	return r

@@ -4,13 +4,16 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/joho/godotenv"
 )
 
 type Config struct {
-	Port        string
-	Env         string
-	CORSOrigins []string
-	Postgres    Postgres
+	Port           string
+	Env            string
+	CORSOrigins    []string
+	ClerkSecretKey string
+	Postgres       Postgres
 }
 
 type Postgres struct {
@@ -29,10 +32,13 @@ func (p Postgres) DSN() string {
 }
 
 func Load() Config {
+	_ = godotenv.Load()
+
 	return Config{
-		Port:        env("PORT", "8080"),
-		Env:         env("ENV", "local"),
-		CORSOrigins: splitCSV(env("CORS_ORIGINS", "http://localhost:3000")),
+		Port:           env("PORT", "8080"),
+		Env:            env("ENV", "local"),
+		CORSOrigins:    splitCSV(env("CORS_ORIGINS", "http://localhost:3000")),
+		ClerkSecretKey: env("CLERK_SECRET_KEY", ""),
 		Postgres: Postgres{
 			Host:     env("POSTGRES_HOST", "localhost"),
 			Port:     env("POSTGRES_PORT", "5432"),

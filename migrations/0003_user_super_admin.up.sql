@@ -1,0 +1,4 @@
+ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS super_admin BOOLEAN NOT NULL DEFAULT false;
+
+DROP TABLE IF EXISTS super_admins;
