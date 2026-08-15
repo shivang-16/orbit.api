@@ -7,13 +7,16 @@ import (
 	"time"
 
 	"github.com/shivang-16/orbit.api/internal/config"
+	catalogueController "github.com/shivang-16/orbit.api/internal/controller/catalogue"
 	healthController "github.com/shivang-16/orbit.api/internal/controller/health"
 	userController "github.com/shivang-16/orbit.api/internal/controller/user"
 	"github.com/shivang-16/orbit.api/internal/infra/clerk"
 	"github.com/shivang-16/orbit.api/internal/infra/postgres"
+	catalogueRepository "github.com/shivang-16/orbit.api/internal/repositories/catalogue"
 	organizationRepository "github.com/shivang-16/orbit.api/internal/repositories/organization"
 	userRepository "github.com/shivang-16/orbit.api/internal/repositories/user"
 	"github.com/shivang-16/orbit.api/internal/routes"
+	catalogueService "github.com/shivang-16/orbit.api/internal/services/catalogue"
 	healthService "github.com/shivang-16/orbit.api/internal/services/health"
 	userService "github.com/shivang-16/orbit.api/internal/services/user"
 )
@@ -42,9 +45,13 @@ func main() {
 	userSvc := userService.NewService(db.DB(), userRepo, orgRepo, clerkClient)
 	userCtrl := userController.NewController(userSvc)
 
+	catalogueRepo := catalogueRepository.NewRepository(db.DB())
+	catalogueSvc := catalogueService.NewService(catalogueRepo)
+	catalogueCtrl := catalogueController.NewController(catalogueSvc)
+
 	healthSvc := healthService.NewService(db)
 	healthCtrl := healthController.NewController(healthSvc)
-	handler := routes.New(cfg, healthCtrl, userCtrl)
+	handler := routes.New(cfg, healthCtrl, userCtrl, catalogueCtrl)
 
 	addr := ":" + cfg.Port
 	log.Printf("orbit.api listening on %s (%s)", addr, cfg.Env)
