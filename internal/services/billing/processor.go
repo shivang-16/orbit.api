@@ -22,7 +22,7 @@ func (p *Processor) Process(ctx context.Context, job Job) error {
 		job.IdempotencyKey = NewIdempotencyKey()
 	}
 
-	var vendorAmount, orbitAmount int64
+	var vendorAmount int64
 	if job.Status == "success" && job.ModelCatalogueID != "" {
 		price, err := p.pricing.GetByCatalogueID(ctx, job.ModelCatalogueID)
 		if err != nil {
@@ -30,7 +30,6 @@ func (p *Processor) Process(ctx context.Context, job Job) error {
 		}
 		if price != nil {
 			vendorAmount = chargeMicros(job.InputTokens, job.OutputTokens, price.VendorInputPerMillionMicros, price.VendorOutputPerMillionMicros)
-			orbitAmount = chargeMicros(job.InputTokens, job.OutputTokens, price.OrbitInputPerMillionMicros, price.OrbitOutputPerMillionMicros)
 		}
 	}
 
@@ -45,9 +44,8 @@ func (p *Processor) Process(ctx context.Context, job Job) error {
 		LatencyMS:          job.LatencyMS,
 		Status:             job.Status,
 		Error:              job.Error,
-		AmountMicros:       orbitAmount,
+		AmountMicros:       vendorAmount,
 		VendorAmountMicros: vendorAmount,
-		OrbitAmountMicros:  orbitAmount,
 	}); err != nil {
 		return fmt.Errorf("record billing: %w", err)
 	}

@@ -26,7 +26,6 @@ func (r *Repository) GetByCatalogueID(ctx context.Context, catalogueID string) (
 		ctx,
 		`SELECT id, model_catalogue_id,
 		        vendor_input_per_million_micros, vendor_output_per_million_micros,
-		        orbit_input_per_million_micros, orbit_output_per_million_micros,
 		        currency, created_at, updated_at
 		 FROM model_pricing
 		 WHERE model_catalogue_id = $1`,
@@ -36,8 +35,6 @@ func (r *Repository) GetByCatalogueID(ctx context.Context, catalogueID string) (
 		&item.ModelCatalogueID,
 		&item.VendorInputPerMillionMicros,
 		&item.VendorOutputPerMillionMicros,
-		&item.OrbitInputPerMillionMicros,
-		&item.OrbitOutputPerMillionMicros,
 		&item.Currency,
 		&item.CreatedAt,
 		&item.UpdatedAt,

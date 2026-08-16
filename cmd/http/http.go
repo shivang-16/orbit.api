@@ -8,26 +8,37 @@ import (
 	"github.com/shivang-16/orbit.api/internal/config"
 	apikeyController "github.com/shivang-16/orbit.api/internal/controller/apikey"
 	catalogueController "github.com/shivang-16/orbit.api/internal/controller/catalogue"
+	checkoutController "github.com/shivang-16/orbit.api/internal/controller/checkout"
+	creditsController "github.com/shivang-16/orbit.api/internal/controller/credits"
 	healthController "github.com/shivang-16/orbit.api/internal/controller/health"
 	inferenceController "github.com/shivang-16/orbit.api/internal/controller/inference"
 	organizationController "github.com/shivang-16/orbit.api/internal/controller/organization"
+	planController "github.com/shivang-16/orbit.api/internal/controller/plan"
 	userController "github.com/shivang-16/orbit.api/internal/controller/user"
+	webhookController "github.com/shivang-16/orbit.api/internal/controller/webhook"
 	"github.com/shivang-16/orbit.api/internal/infra/clerk"
+	"github.com/shivang-16/orbit.api/internal/infra/dodo"
 	"github.com/shivang-16/orbit.api/internal/infra/postgres"
 	"github.com/shivang-16/orbit.api/internal/infra/sqs"
 	apikeyMiddleware "github.com/shivang-16/orbit.api/internal/middleware/apikey"
 	apikeyRepository "github.com/shivang-16/orbit.api/internal/repositories/apikey"
+	billingRepository "github.com/shivang-16/orbit.api/internal/repositories/billing"
 	catalogueRepository "github.com/shivang-16/orbit.api/internal/repositories/catalogue"
 	organizationRepository "github.com/shivang-16/orbit.api/internal/repositories/organization"
+	planRepository "github.com/shivang-16/orbit.api/internal/repositories/plan"
 	userRepository "github.com/shivang-16/orbit.api/internal/repositories/user"
 	"github.com/shivang-16/orbit.api/internal/routes"
 	apikeyService "github.com/shivang-16/orbit.api/internal/services/apikey"
 	billingService "github.com/shivang-16/orbit.api/internal/services/billing"
 	catalogueService "github.com/shivang-16/orbit.api/internal/services/catalogue"
+	checkoutService "github.com/shivang-16/orbit.api/internal/services/checkout"
+	creditsService "github.com/shivang-16/orbit.api/internal/services/credits"
 	healthService "github.com/shivang-16/orbit.api/internal/services/health"
 	inferenceService "github.com/shivang-16/orbit.api/internal/services/inference"
 	organizationService "github.com/shivang-16/orbit.api/internal/services/organization"
+	planService "github.com/shivang-16/orbit.api/internal/services/plan"
 	userService "github.com/shivang-16/orbit.api/internal/services/user"
+	webhookService "github.com/shivang-16/orbit.api/internal/services/webhook"
 )
 
 func Start(_ context.Context, cfg config.Config) {
@@ -68,9 +79,24 @@ func Start(_ context.Context, cfg config.Config) {
 	inferenceCtrl := inferenceController.NewController(inferenceSvc, billingPublisher)
 	apiKeyAuth := apikeyMiddleware.New(apiKeyRepo)
 
+	planRepo := planRepository.NewRepository(db.DB())
+	planSvc := planService.NewService(planRepo)
+	planCtrl := planController.NewController(planSvc)
+
+	billingRepo := billingRepository.NewRepository(db.DB())
+	dodoClient := dodo.New(cfg)
+	checkoutSvc := checkoutService.NewService(dodoClient, clerkClient, planRepo, orgRepo, cfg)
+	checkoutCtrl := checkoutController.NewController(checkoutSvc)
+
+	dodoWebhookSvc := webhookService.NewDodoService(billingRepo, planRepo)
+	webhookCtrl := webhookController.NewController(cfg.Dodo.WebhookKey, dodoWebhookSvc)
+
+	creditsSvc := creditsService.NewService(billingRepo, orgRepo)
+	creditsCtrl := creditsController.NewController(creditsSvc)
+
 	healthSvc := healthService.NewService(db)
 	healthCtrl := healthController.NewController(healthSvc)
-	handler := routes.New(cfg, healthCtrl, userCtrl, catalogueCtrl, apiKeyCtrl, orgCtrl, inferenceCtrl, apiKeyAuth)
+	handler := routes.New(cfg, healthCtrl, userCtrl, catalogueCtrl, apiKeyCtrl, orgCtrl, inferenceCtrl, planCtrl, checkoutCtrl, creditsCtrl, webhookCtrl, apiKeyAuth)
 
 	addr := ":" + cfg.Port
 	log.Printf("orbit.api http listening on %s (%s)", addr, cfg.Env)

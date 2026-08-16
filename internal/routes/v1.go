@@ -5,10 +5,14 @@ import (
 
 	apikeyController "github.com/shivang-16/orbit.api/internal/controller/apikey"
 	catalogueController "github.com/shivang-16/orbit.api/internal/controller/catalogue"
+	checkoutController "github.com/shivang-16/orbit.api/internal/controller/checkout"
+	creditsController "github.com/shivang-16/orbit.api/internal/controller/credits"
 	healthController "github.com/shivang-16/orbit.api/internal/controller/health"
 	inferenceController "github.com/shivang-16/orbit.api/internal/controller/inference"
 	organizationController "github.com/shivang-16/orbit.api/internal/controller/organization"
+	planController "github.com/shivang-16/orbit.api/internal/controller/plan"
 	userController "github.com/shivang-16/orbit.api/internal/controller/user"
+	webhookController "github.com/shivang-16/orbit.api/internal/controller/webhook"
 	apikeyMiddleware "github.com/shivang-16/orbit.api/internal/middleware/apikey"
 	authMiddleware "github.com/shivang-16/orbit.api/internal/middleware/auth"
 )
@@ -21,10 +25,16 @@ func registerV1(
 	apiKeys *apikeyController.Controller,
 	orgs *organizationController.Controller,
 	inference *inferenceController.Controller,
+	plans *planController.Controller,
+	checkout *checkoutController.Controller,
+	credits *creditsController.Controller,
+	webhooks *webhookController.Controller,
 	apiKeyAuth *apikeyMiddleware.Middleware,
 ) {
 	r.Get("/health", health.Check)
 	r.Get("/ready", health.Ready)
+	r.Get("/plans", plans.List)
+	r.Post("/webhooks/dodo", webhooks.Dodo)
 
 	r.Group(func(r chi.Router) {
 		r.Use(authMiddleware.Clerk)
@@ -36,6 +46,9 @@ func registerV1(
 		r.Post("/api-keys", apiKeys.Create)
 		r.Get("/organizations", orgs.List)
 		r.Post("/organizations", orgs.Create)
+		r.Post("/billing/checkout", checkout.Create)
+		r.Get("/billing/credits", credits.GetOrganizationCredits)
+		r.Get("/billing/credits/history", credits.ListOrganizationCreditHistory)
 	})
 
 	// Authenticated with an Orbit API key (sk-orbit-...) instead of a Clerk

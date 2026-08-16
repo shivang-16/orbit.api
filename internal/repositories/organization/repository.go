@@ -138,6 +138,37 @@ func (r *Repository) ListForUser(ctx context.Context, userID string) ([]model.Or
 	return orgs, nil
 }
 
+func (r *Repository) GetByID(ctx context.Context, id string) (*model.Organization, error) {
+	org := model.Organization{}
+	err := r.db.QueryRowContext(
+		ctx,
+		`SELECT id, name, slug, description, created_by,
+		        credits_granted_micros, credits_used_micros, credits_remaining_micros,
+		        created_at, updated_at
+		 FROM organizations
+		 WHERE id = $1`,
+		id,
+	).Scan(
+		&org.ID,
+		&org.Name,
+		&org.Slug,
+		&org.Description,
+		&org.CreatedBy,
+		&org.CreditsGrantedMicros,
+		&org.CreditsUsedMicros,
+		&org.CreditsRemainingMicros,
+		&org.CreatedAt,
+		&org.UpdatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &org, nil
+}
+
 func (r *Repository) GetFirstForUser(ctx context.Context, userID string) (*model.Organization, error) {
 	org := model.Organization{}
 	err := r.db.QueryRowContext(

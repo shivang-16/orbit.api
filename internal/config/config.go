@@ -12,12 +12,20 @@ type Config struct {
 	Port             string
 	Env              string
 	CORSOrigins      []string
+	FrontendURL      string
 	ClerkSecretKey   string
 	Postgres         Postgres
 	AWSBedrockAPIKey string
 	AWSBedrockRegion string
 	AWS              AWS
 	SQS              SQS
+	Dodo             Dodo
+}
+
+type Dodo struct {
+	APIKey     string
+	Env        string
+	WebhookKey string
 }
 
 type AWS struct {
@@ -52,6 +60,7 @@ func Load() Config {
 		Port:           env("PORT", "8080"),
 		Env:            env("ENV", "local"),
 		CORSOrigins:    splitCSV(env("CORS_ORIGINS", "http://localhost:3000")),
+		FrontendURL:    env("FRONTEND_URL", "http://localhost:3000"),
 		ClerkSecretKey: env("CLERK_SECRET_KEY", ""),
 		Postgres: Postgres{
 			Host:     env("POSTGRES_HOST", "localhost"),
@@ -69,6 +78,11 @@ func Load() Config {
 		SQS: SQS{
 			Region:          env("AWS_QUEUE_REGION", ""),
 			BillingQueueURL: env("AWS_SQS_BILLING_QUEUE_URL", ""),
+		},
+		Dodo: Dodo{
+			APIKey:     env("DODO_PAYMENTS_API_KEY", ""),
+			Env:        env("DODO_ENV", "test"),
+			WebhookKey: env("DODO_WEBHOOK_KEY", ""),
 		},
 	}
 }

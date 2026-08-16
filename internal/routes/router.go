@@ -11,10 +11,14 @@ import (
 	"github.com/shivang-16/orbit.api/internal/config"
 	apikeyController "github.com/shivang-16/orbit.api/internal/controller/apikey"
 	catalogueController "github.com/shivang-16/orbit.api/internal/controller/catalogue"
+	checkoutController "github.com/shivang-16/orbit.api/internal/controller/checkout"
+	creditsController "github.com/shivang-16/orbit.api/internal/controller/credits"
 	healthController "github.com/shivang-16/orbit.api/internal/controller/health"
 	inferenceController "github.com/shivang-16/orbit.api/internal/controller/inference"
 	organizationController "github.com/shivang-16/orbit.api/internal/controller/organization"
+	planController "github.com/shivang-16/orbit.api/internal/controller/plan"
 	userController "github.com/shivang-16/orbit.api/internal/controller/user"
+	webhookController "github.com/shivang-16/orbit.api/internal/controller/webhook"
 	apikeyMiddleware "github.com/shivang-16/orbit.api/internal/middleware/apikey"
 )
 
@@ -26,6 +30,10 @@ func New(
 	apiKeys *apikeyController.Controller,
 	orgs *organizationController.Controller,
 	inference *inferenceController.Controller,
+	plans *planController.Controller,
+	checkout *checkoutController.Controller,
+	credits *creditsController.Controller,
+	webhooks *webhookController.Controller,
 	apiKeyAuth *apikeyMiddleware.Middleware,
 ) http.Handler {
 	r := chi.NewRouter()
@@ -48,7 +56,7 @@ func New(
 	r.Get("/ready", health.Ready)
 
 	r.Route("/api/v1", func(r chi.Router) {
-		registerV1(r, health, users, catalogue, apiKeys, orgs, inference, apiKeyAuth)
+		registerV1(r, health, users, catalogue, apiKeys, orgs, inference, plans, checkout, credits, webhooks, apiKeyAuth)
 	})
 
 	return r

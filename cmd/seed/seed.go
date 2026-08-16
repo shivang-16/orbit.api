@@ -24,14 +24,10 @@ type catalogueModel struct {
 }
 
 // Bedrock on-demand list prices in USD micros per 1 million tokens
-// (1_000_000 = $1.00). Region: us-east-1. Orbit sells at 25% off vendor.
+// (1_000_000 = $1.00). Region: us-east-1. Credits are charged at these rates.
 type modelPrice struct {
 	VendorInputPerMillionMicros  int64
 	VendorOutputPerMillionMicros int64
-}
-
-func orbitPrice(vendorMicros int64) int64 {
-	return vendorMicros * 75 / 100
 }
 
 // Add models here (latest → oldest within each vendor), then run:
@@ -344,25 +340,19 @@ func main() {
 			`INSERT INTO model_pricing (
 				model_catalogue_id,
 				vendor_input_per_million_micros,
-				vendor_output_per_million_micros,
-				orbit_input_per_million_micros,
-				orbit_output_per_million_micros
-			) VALUES ($1, $2, $3, $4, $5)`,
+				vendor_output_per_million_micros
+			) VALUES ($1, $2, $3)`,
 			id,
 			price.VendorInputPerMillionMicros,
 			price.VendorOutputPerMillionMicros,
-			orbitPrice(price.VendorInputPerMillionMicros),
-			orbitPrice(price.VendorOutputPerMillionMicros),
 		)
 		if err != nil {
 			log.Fatalf("price %s: %v", model.Name, err)
 		}
 		log.Printf(
-			"  vendor $%.4f / $%.4f  →  orbit $%.4f / $%.4f  per 1M tokens",
+			"  vendor $%.4f / $%.4f per 1M tokens",
 			float64(price.VendorInputPerMillionMicros)/1_000_000,
 			float64(price.VendorOutputPerMillionMicros)/1_000_000,
-			float64(orbitPrice(price.VendorInputPerMillionMicros))/1_000_000,
-			float64(orbitPrice(price.VendorOutputPerMillionMicros))/1_000_000,
 		)
 	}
 }
