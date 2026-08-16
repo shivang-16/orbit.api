@@ -26,6 +26,7 @@ import (
 	catalogueRepository "github.com/shivang-16/orbit.api/internal/repositories/catalogue"
 	organizationRepository "github.com/shivang-16/orbit.api/internal/repositories/organization"
 	planRepository "github.com/shivang-16/orbit.api/internal/repositories/plan"
+	pricingRepository "github.com/shivang-16/orbit.api/internal/repositories/pricing"
 	userRepository "github.com/shivang-16/orbit.api/internal/repositories/user"
 	"github.com/shivang-16/orbit.api/internal/routes"
 	apikeyService "github.com/shivang-16/orbit.api/internal/services/apikey"
@@ -65,7 +66,8 @@ func Start(_ context.Context, cfg config.Config) {
 	userCtrl := userController.NewController(userSvc)
 
 	catalogueRepo := catalogueRepository.NewRepository(db.DB())
-	catalogueSvc := catalogueService.NewService(catalogueRepo)
+	pricingRepo := pricingRepository.NewRepository(db.DB())
+	catalogueSvc := catalogueService.NewService(catalogueRepo, pricingRepo)
 	catalogueCtrl := catalogueController.NewController(catalogueSvc)
 
 	apiKeyRepo := apikeyRepository.NewRepository(db.DB())

@@ -8,6 +8,7 @@ import (
 
 	"github.com/shivang-16/orbit.api/internal/model"
 	catalogueRepository "github.com/shivang-16/orbit.api/internal/repositories/catalogue"
+	pricingRepository "github.com/shivang-16/orbit.api/internal/repositories/pricing"
 )
 
 // Order of the highlight cards on the overview page.
@@ -15,10 +16,11 @@ var highlightTags = []string{"flagship", "open-source", "cost-efficient", "fast"
 
 type Service struct {
 	catalogue *catalogueRepository.Repository
+	pricing   *pricingRepository.Repository
 }
 
-func NewService(catalogue *catalogueRepository.Repository) *Service {
-	return &Service{catalogue: catalogue}
+func NewService(catalogue *catalogueRepository.Repository, pricing *pricingRepository.Repository) *Service {
+	return &Service{catalogue: catalogue, pricing: pricing}
 }
 
 func (s *Service) List(ctx context.Context, tag string) (*ListResponse, error) {
@@ -42,7 +44,13 @@ func (s *Service) Get(ctx context.Context, id string) (*GetResponse, error) {
 	if item == nil {
 		return nil, nil
 	}
-	return &GetResponse{Model: *item}, nil
+
+	price, err := s.pricing.GetByCatalogueID(ctx, item.ID)
+	if err != nil {
+		return nil, fmt.Errorf("get model pricing: %w", err)
+	}
+
+	return &GetResponse{Model: *item, Pricing: price}, nil
 }
 
 func (s *Service) Overview(ctx context.Context) (*OverviewResponse, error) {

@@ -8,7 +8,8 @@ type ListResponse struct {
 }
 
 type GetResponse struct {
-	Model model.ModelCatalogue `json:"model"`
+	Model   model.ModelCatalogue `json:"model"`
+	Pricing *model.ModelPricing  `json:"pricing"`
 }
 
 // Highlight is the leading model for a tag, plus how many models carry it.
