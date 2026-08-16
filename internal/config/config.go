@@ -16,6 +16,18 @@ type Config struct {
 	Postgres         Postgres
 	AWSBedrockAPIKey string
 	AWSBedrockRegion string
+	AWS              AWS
+	SQS              SQS
+}
+
+type AWS struct {
+	AccessKeyID     string
+	SecretAccessKey string
+}
+
+type SQS struct {
+	Region          string
+	BillingQueueURL string
 }
 
 type Postgres struct {
@@ -50,6 +62,14 @@ func Load() Config {
 		},
 		AWSBedrockAPIKey: env("AWS_BEDROCK_API_KEY", ""),
 		AWSBedrockRegion: env("AWS_BEDROCK_REGION", "us-east-1"),
+		AWS: AWS{
+			AccessKeyID:     env("AWS_ACCESS_KEY_ID", ""),
+			SecretAccessKey: env("AWS_SECRET_ACCESS_KEY", ""),
+		},
+		SQS: SQS{
+			Region:          env("AWS_QUEUE_REGION", ""),
+			BillingQueueURL: env("AWS_SQS_BILLING_QUEUE_URL", ""),
+		},
 	}
 }
 

@@ -21,8 +21,11 @@ import (
 	"github.com/shivang-16/orbit.api/internal/infra/postgres"
 	apikeyMiddleware "github.com/shivang-16/orbit.api/internal/middleware/apikey"
 	apikeyRepository "github.com/shivang-16/orbit.api/internal/repositories/apikey"
+	billingRepository "github.com/shivang-16/orbit.api/internal/repositories/billing"
 	catalogueRepository "github.com/shivang-16/orbit.api/internal/repositories/catalogue"
+	pricingRepository "github.com/shivang-16/orbit.api/internal/repositories/pricing"
 	apikeyService "github.com/shivang-16/orbit.api/internal/services/apikey"
+	billingService "github.com/shivang-16/orbit.api/internal/services/billing"
 	inferenceService "github.com/shivang-16/orbit.api/internal/services/inference"
 )
 
@@ -61,8 +64,12 @@ func TestChatSonnet45(t *testing.T) {
 
 	catalogueRepo := catalogueRepository.NewRepository(db.DB())
 	apiKeyRepo := apikeyRepository.NewRepository(db.DB())
+	billingWorker := billingService.NewWorker(
+		billingRepository.NewRepository(db.DB()),
+		pricingRepository.NewRepository(db.DB()),
+	)
 	svc := inferenceService.NewService(catalogueRepo, cfg.AWSBedrockAPIKey, cfg.AWSBedrockRegion)
-	ctrl := inferenceController.NewController(svc)
+	ctrl := inferenceController.NewController(svc, billingWorker)
 
 	r := chi.NewRouter()
 	r.Use(apikeyMiddleware.New(apiKeyRepo).Authenticate)
@@ -97,6 +104,29 @@ func TestChatSonnet45(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, pretty)
 	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	var logged, charged int
+	for time.Now().Before(deadline) {
+		_ = db.DB().QueryRowContext(
+			ctx,
+			`SELECT
+				(SELECT COUNT(*) FROM inference_requests WHERE model_catalogue_id = $1),
+				(SELECT COUNT(*) FROM credit_ledger WHERE organization_id = (
+					SELECT organization_id FROM api_keys WHERE id = $2
+				) AND entry_type = 'usage')`,
+			modelID,
+			keyID,
+		).Scan(&logged, &charged)
+		if logged > 0 && charged > 0 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if logged == 0 {
+		t.Fatal("expected an inference_requests row")
+	}
+	fmt.Printf("logged requests: %d  ledger usage rows: %d\n", logged, charged)
 }
 
 func insertTestKey(t *testing.T, ctx context.Context, db *postgres.Client) (secret, keyID string) {

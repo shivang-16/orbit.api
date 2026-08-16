@@ -36,6 +36,21 @@ func Open(cfg config.Postgres) (*Client, error) {
 	return &Client{db: db}, nil
 }
 
+func OpenAndMigrate(cfg config.Postgres, migrationsDir string) (*Client, error) {
+	client, err := Open(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := client.Migrate(ctx, migrationsDir); err != nil {
+		_ = client.Close()
+		return nil, err
+	}
+	return client, nil
+}
+
 func (c *Client) Ping(ctx context.Context) error {
 	return c.db.PingContext(ctx)
 }

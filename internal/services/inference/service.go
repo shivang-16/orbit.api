@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"time"
@@ -45,11 +46,16 @@ func NewService(catalogue *catalogueRepository.Repository, bedrockAPIKey, bedroc
 	return &Service{catalogue: catalogue, bedrockAPIKey: bedrockAPIKey, bedrockRegion: bedrockRegion}
 }
 
-// Chat resolves the catalogue model and forwards the conversation upstream.
-// It returns the raw upstream *http.Response so the controller can stream
-// the body straight through to the caller without an extra decode/encode
-// round trip; callers must close the response body.
-func (s *Service) Chat(ctx context.Context, modelID string, req ChatRequest) (*http.Response, error) {
+type ChatResult struct {
+	StatusCode       int
+	Body             []byte
+	ModelCatalogueID string
+	InputTokens      int
+	OutputTokens     int
+	LatencyMS        int
+}
+
+func (s *Service) Chat(ctx context.Context, modelID string, req ChatRequest) (*ChatResult, error) {
 	if !req.isValid() {
 		return nil, ErrInvalid
 	}
@@ -65,7 +71,7 @@ func (s *Service) Chat(ctx context.Context, modelID string, req ChatRequest) (*h
 		return nil, ErrUnsupportedProvider
 	}
 
-	body, err := bedrockConverseBody(req)
+	payload, err := bedrockConverseBody(req)
 	if err != nil {
 		return nil, fmt.Errorf("encode request: %w", err)
 	}
@@ -75,18 +81,54 @@ func (s *Service) Chat(ctx context.Context, modelID string, req ChatRequest) (*h
 		s.bedrockRegion,
 		url.PathEscape(entry.ModelID),
 	)
-	upstream, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	upstream, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 	if err != nil {
 		return nil, fmt.Errorf("build upstream request: %w", err)
 	}
 	upstream.Header.Set("Content-Type", "application/json")
 	upstream.Header.Set("Authorization", "Bearer "+s.bedrockAPIKey)
 
+	started := time.Now()
 	resp, err := httpClient.Do(upstream)
 	if err != nil {
 		return nil, fmt.Errorf("call bedrock: %w", err)
 	}
-	return resp, nil
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read bedrock response: %w", err)
+	}
+
+	inputTokens, outputTokens, latencyMS := parseBedrockUsage(body)
+	if latencyMS == 0 {
+		latencyMS = int(time.Since(started).Milliseconds())
+	}
+
+	return &ChatResult{
+		StatusCode:       resp.StatusCode,
+		Body:             body,
+		ModelCatalogueID: entry.ID,
+		InputTokens:      inputTokens,
+		OutputTokens:     outputTokens,
+		LatencyMS:        latencyMS,
+	}, nil
+}
+
+func parseBedrockUsage(body []byte) (inputTokens, outputTokens, latencyMS int) {
+	var parsed struct {
+		Usage struct {
+			InputTokens  int `json:"inputTokens"`
+			OutputTokens int `json:"outputTokens"`
+		} `json:"usage"`
+		Metrics struct {
+			LatencyMS int `json:"latencyMs"`
+		} `json:"metrics"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return 0, 0, 0
+	}
+	return parsed.Usage.InputTokens, parsed.Usage.OutputTokens, parsed.Metrics.LatencyMS
 }
 
 // bedrockConverseBody maps our simple {role, content} messages onto

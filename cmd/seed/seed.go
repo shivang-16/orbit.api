@@ -23,6 +23,17 @@ type catalogueModel struct {
 	IsActive          bool
 }
 
+// Bedrock on-demand list prices in USD micros per 1 million tokens
+// (1_000_000 = $1.00). Region: us-east-1. Orbit sells at 25% off vendor.
+type modelPrice struct {
+	VendorInputPerMillionMicros  int64
+	VendorOutputPerMillionMicros int64
+}
+
+func orbitPrice(vendorMicros int64) int64 {
+	return vendorMicros * 75 / 100
+}
+
 // Add models here (latest → oldest within each vendor), then run:
 //
 //	go run ./cmd/seed
@@ -240,6 +251,30 @@ var models = []catalogueModel{
 	},
 }
 
+// Source: AWS Bedrock on-demand pricing (us-east-1), Aug 2026.
+// https://aws.amazon.com/bedrock/pricing/
+var prices = map[string]modelPrice{
+	"Claude Opus 5":          {5_000_000, 25_000_000},
+	"Claude Sonnet 5":        {2_000_000, 10_000_000},
+	"Claude Fable 5":         {10_000_000, 50_000_000},
+	"Claude Opus 4.8":        {5_000_000, 25_000_000},
+	"Claude Opus 4.7":        {5_000_000, 25_000_000},
+	"Claude Sonnet 4.6":      {3_000_000, 15_000_000},
+	"Claude Opus 4.6":        {5_000_000, 25_000_000},
+	"Claude Opus 4.5":        {5_000_000, 25_000_000},
+	"Claude Haiku 4.5":       {1_000_000, 5_000_000},
+	"Claude Sonnet 4.5":      {3_000_000, 15_000_000},
+	"GPT 5.6 Luna":           {220_000, 1_320_000},
+	"GPT 5.6 Sol":            {5_500_000, 33_000_000},
+	"GPT 5.6 Terra":          {2_200_000, 13_200_000},
+	"GPT OSS Safeguard 120B": {150_000, 600_000},
+	"GPT OSS Safeguard 20B":  {70_000, 200_000},
+	"GPT OSS 120B":           {150_000, 600_000},
+	"GPT OSS 20B":            {70_000, 300_000},
+	"Kimi K2.5":              {600_000, 3_000_000},
+	"Kimi K2 Thinking":       {600_000, 2_500_000},
+}
+
 func main() {
 	if len(models) == 0 {
 		log.Print("no models in seed.go — nothing to insert")
@@ -255,6 +290,10 @@ func main() {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+
+	if err := db.Migrate(ctx, "migrations"); err != nil {
+		log.Fatalf("migrate: %v", err)
+	}
 
 	vendors := map[string]struct{}{}
 	for _, model := range models {
@@ -295,5 +334,35 @@ func main() {
 			log.Fatalf("insert %s: %v", model.Name, err)
 		}
 		log.Printf("inserted %s [%s #%d] → %s", name, vendor, sortOrder, id)
+
+		price, ok := prices[model.Name]
+		if !ok {
+			log.Fatalf("missing Bedrock price for %s", model.Name)
+		}
+		_, err = db.DB().ExecContext(
+			ctx,
+			`INSERT INTO model_pricing (
+				model_catalogue_id,
+				vendor_input_per_million_micros,
+				vendor_output_per_million_micros,
+				orbit_input_per_million_micros,
+				orbit_output_per_million_micros
+			) VALUES ($1, $2, $3, $4, $5)`,
+			id,
+			price.VendorInputPerMillionMicros,
+			price.VendorOutputPerMillionMicros,
+			orbitPrice(price.VendorInputPerMillionMicros),
+			orbitPrice(price.VendorOutputPerMillionMicros),
+		)
+		if err != nil {
+			log.Fatalf("price %s: %v", model.Name, err)
+		}
+		log.Printf(
+			"  vendor $%.4f / $%.4f  →  orbit $%.4f / $%.4f  per 1M tokens",
+			float64(price.VendorInputPerMillionMicros)/1_000_000,
+			float64(price.VendorOutputPerMillionMicros)/1_000_000,
+			float64(orbitPrice(price.VendorInputPerMillionMicros))/1_000_000,
+			float64(orbitPrice(price.VendorOutputPerMillionMicros))/1_000_000,
+		)
 	}
 }

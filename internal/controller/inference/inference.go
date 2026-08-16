@@ -3,24 +3,24 @@ package inference
 import (
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 
+	apikeyMiddleware "github.com/shivang-16/orbit.api/internal/middleware/apikey"
+	billingService "github.com/shivang-16/orbit.api/internal/services/billing"
 	inferenceService "github.com/shivang-16/orbit.api/internal/services/inference"
 )
 
 type Controller struct {
 	service *inferenceService.Service
+	billing billingService.Enqueuer
 }
 
-func NewController(service *inferenceService.Service) *Controller {
-	return &Controller{service: service}
+func NewController(service *inferenceService.Service, billing billingService.Enqueuer) *Controller {
+	return &Controller{service: service, billing: billing}
 }
 
-// Chat validates the request, forwards it to the model provider, and
-// streams the upstream response body straight back to the caller.
 func (c *Controller) Chat(w http.ResponseWriter, r *http.Request) {
 	modelID := chi.URLParam(r, "id")
 
@@ -30,7 +30,7 @@ func (c *Controller) Chat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	upstream, err := c.service.Chat(r.Context(), modelID, req)
+	result, err := c.service.Chat(r.Context(), modelID, req)
 	if err != nil {
 		switch {
 		case errors.Is(err, inferenceService.ErrInvalid):
@@ -44,11 +44,43 @@ func (c *Controller) Chat(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	defer upstream.Body.Close()
 
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(upstream.StatusCode)
-	_, _ = io.Copy(w, upstream.Body)
+	w.WriteHeader(result.StatusCode)
+	_, _ = w.Write(result.Body)
+
+	orgID, _ := apikeyMiddleware.OrganizationID(r.Context())
+	apiKeyID, _ := apikeyMiddleware.APIKeyID(r.Context())
+	status := "success"
+	errText := ""
+	if result.StatusCode < 200 || result.StatusCode >= 300 {
+		status = "error"
+		errText = truncate(string(result.Body), 500)
+	}
+
+	if c.billing == nil {
+		return
+	}
+
+	c.billing.Enqueue(billingService.Job{
+		IdempotencyKey:   billingService.NewIdempotencyKey(),
+		OrganizationID:   orgID,
+		APIKeyID:         apiKeyID,
+		ModelCatalogueID: result.ModelCatalogueID,
+		Prompt:           req.Prompt(),
+		InputTokens:      result.InputTokens,
+		OutputTokens:     result.OutputTokens,
+		LatencyMS:        result.LatencyMS,
+		Status:           status,
+		Error:            errText,
+	})
+}
+
+func truncate(value string, max int) string {
+	if len(value) <= max {
+		return value
+	}
+	return value[:max]
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {

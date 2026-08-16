@@ -13,6 +13,22 @@ type ChatRequest struct {
 	Temperature float64       `json:"temperature,omitempty"`
 }
 
+func (r ChatRequest) Prompt() string {
+	for i := len(r.Messages) - 1; i >= 0; i-- {
+		if r.Messages[i].Role == "user" {
+			return truncate(strings.TrimSpace(r.Messages[i].Content), 4000)
+		}
+	}
+	return ""
+}
+
+func truncate(value string, max int) string {
+	if len(value) <= max {
+		return value
+	}
+	return value[:max]
+}
+
 func (r ChatRequest) isValid() bool {
 	if len(r.Messages) == 0 {
 		return false

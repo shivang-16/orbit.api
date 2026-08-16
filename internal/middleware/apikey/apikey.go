@@ -63,6 +63,11 @@ func OrganizationID(ctx context.Context) (string, bool) {
 	return id, ok && id != ""
 }
 
+func APIKeyID(ctx context.Context) (string, bool) {
+	id, ok := ctx.Value(apiKeyIDKey).(string)
+	return id, ok && id != ""
+}
+
 func bearerToken(header string) string {
 	const prefix = "Bearer "
 	if !strings.HasPrefix(header, prefix) {
