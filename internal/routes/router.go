@@ -9,8 +9,10 @@ import (
 	"github.com/go-chi/cors"
 
 	"github.com/shivang-16/orbit.api/internal/config"
+	apikeyController "github.com/shivang-16/orbit.api/internal/controller/apikey"
 	catalogueController "github.com/shivang-16/orbit.api/internal/controller/catalogue"
 	healthController "github.com/shivang-16/orbit.api/internal/controller/health"
+	organizationController "github.com/shivang-16/orbit.api/internal/controller/organization"
 	userController "github.com/shivang-16/orbit.api/internal/controller/user"
 )
 
@@ -19,6 +21,8 @@ func New(
 	health *healthController.Controller,
 	users *userController.Controller,
 	catalogue *catalogueController.Controller,
+	apiKeys *apikeyController.Controller,
+	orgs *organizationController.Controller,
 ) http.Handler {
 	r := chi.NewRouter()
 
@@ -30,7 +34,7 @@ func New(
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   cfg.CORSOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Request-ID"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Request-ID", "X-Organization-Id"},
 		ExposedHeaders:   []string{"Link"},
 		AllowCredentials: true,
 		MaxAge:           300,
@@ -40,7 +44,7 @@ func New(
 	r.Get("/ready", health.Ready)
 
 	r.Route("/api/v1", func(r chi.Router) {
-		registerV1(r, health, users, catalogue)
+		registerV1(r, health, users, catalogue, apiKeys, orgs)
 	})
 
 	return r

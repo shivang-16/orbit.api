@@ -2,15 +2,23 @@ package organization
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
+	"errors"
+	"regexp"
+	"strings"
 
 	"github.com/shivang-16/orbit.api/internal/model"
 )
 
 const DefaultOrganizationName = "Default Organization"
 
+var slugCleaner = regexp.MustCompile(`[^a-z0-9]+`)
+
 type dbTX interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
@@ -37,16 +45,43 @@ func (r *Repository) HasMembership(ctx context.Context, userID string) (bool, er
 	return exists, nil
 }
 
+func (r *Repository) IsMember(ctx context.Context, userID, organizationID string) (bool, error) {
+	var exists bool
+	err := r.db.QueryRowContext(
+		ctx,
+		`SELECT EXISTS(
+			SELECT 1 FROM organization_members
+			WHERE user_id = $1 AND organization_id = $2
+		)`,
+		userID,
+		organizationID,
+	).Scan(&exists)
+	if err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
 func (r *Repository) CreateDefaultForUser(ctx context.Context, userID string) (*model.Organization, error) {
+	return r.create(ctx, DefaultOrganizationName, "", userID, "default-"+randomSuffix())
+}
+
+func (r *Repository) CreateForUser(ctx context.Context, name, description, userID string) (*model.Organization, error) {
+	return r.create(ctx, name, description, userID, uniqueSlug(name))
+}
+
+func (r *Repository) create(ctx context.Context, name, description, userID, slug string) (*model.Organization, error) {
 	org := model.Organization{}
 	err := r.db.QueryRowContext(
 		ctx,
-		`INSERT INTO organizations (name, slug, created_by)
-		 VALUES ($1, 'default-' || replace(gen_random_uuid()::text, '-', ''), $2)
-		 RETURNING id, name, slug, created_by, created_at, updated_at`,
-		DefaultOrganizationName,
+		`INSERT INTO organizations (name, slug, description, created_by)
+		 VALUES ($1, $2, $3, $4)
+		 RETURNING id, name, slug, description, created_by, created_at, updated_at`,
+		name,
+		slug,
+		description,
 		userID,
-	).Scan(&org.ID, &org.Name, &org.Slug, &org.CreatedBy, &org.CreatedAt, &org.UpdatedAt)
+	).Scan(&org.ID, &org.Name, &org.Slug, &org.Description, &org.CreatedBy, &org.CreatedAt, &org.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -64,4 +99,84 @@ func (r *Repository) CreateDefaultForUser(ctx context.Context, userID string) (*
 	}
 
 	return &org, nil
+}
+
+func (r *Repository) ListForUser(ctx context.Context, userID string) ([]model.Organization, error) {
+	rows, err := r.db.QueryContext(
+		ctx,
+		`SELECT o.id, o.name, o.slug, o.description, o.created_by, o.created_at, o.updated_at
+		 FROM organizations o
+		 INNER JOIN organization_members m ON m.organization_id = o.id
+		 WHERE m.user_id = $1
+		 ORDER BY o.created_at ASC`,
+		userID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	orgs := make([]model.Organization, 0)
+	for rows.Next() {
+		var org model.Organization
+		if err := rows.Scan(
+			&org.ID,
+			&org.Name,
+			&org.Slug,
+			&org.Description,
+			&org.CreatedBy,
+			&org.CreatedAt,
+			&org.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		orgs = append(orgs, org)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return orgs, nil
+}
+
+func (r *Repository) GetFirstForUser(ctx context.Context, userID string) (*model.Organization, error) {
+	org := model.Organization{}
+	err := r.db.QueryRowContext(
+		ctx,
+		`SELECT o.id, o.name, o.slug, o.description, o.created_by, o.created_at, o.updated_at
+		 FROM organizations o
+		 INNER JOIN organization_members m ON m.organization_id = o.id
+		 WHERE m.user_id = $1
+		 ORDER BY o.created_at ASC
+		 LIMIT 1`,
+		userID,
+	).Scan(&org.ID, &org.Name, &org.Slug, &org.Description, &org.CreatedBy, &org.CreatedAt, &org.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &org, nil
+}
+
+func uniqueSlug(name string) string {
+	base := slugify(name)
+	if base == "" {
+		base = "org"
+	}
+	return base + "-" + randomSuffix()
+}
+
+func slugify(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	value = slugCleaner.ReplaceAllString(value, "-")
+	return strings.Trim(value, "-")
+}
+
+func randomSuffix() string {
+	raw := make([]byte, 4)
+	if _, err := rand.Read(raw); err != nil {
+		return hex.EncodeToString([]byte("orbit"))
+	}
+	return hex.EncodeToString(raw)
 }
