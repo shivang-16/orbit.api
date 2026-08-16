@@ -8,9 +8,12 @@ import (
 	"github.com/shivang-16/orbit.api/internal/infra/clerk"
 	authMiddleware "github.com/shivang-16/orbit.api/internal/middleware/auth"
 	"github.com/shivang-16/orbit.api/internal/model"
+	billingRepository "github.com/shivang-16/orbit.api/internal/repositories/billing"
 	organizationRepository "github.com/shivang-16/orbit.api/internal/repositories/organization"
 	userRepository "github.com/shivang-16/orbit.api/internal/repositories/user"
 )
+
+const signupCreditsMicros int64 = 5_000_000
 
 type Service struct {
 	db    *sql.DB
@@ -75,8 +78,12 @@ func (s *Service) createUserWithDefaultOrg(ctx context.Context, user *model.User
 		return nil, fmt.Errorf("create user: %w", err)
 	}
 
-	if _, err := organizationRepository.NewRepository(tx).CreateDefaultForUser(ctx, created.ID); err != nil {
+	org, err := organizationRepository.NewRepository(tx).CreateDefaultForUser(ctx, created.ID)
+	if err != nil {
 		return nil, fmt.Errorf("create default organization: %w", err)
+	}
+	if err := grantSignupCredits(ctx, tx, created.ID, org.ID); err != nil {
+		return nil, err
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -110,12 +117,28 @@ func (s *Service) ensureDefaultOrg(ctx context.Context, userID string) error {
 		return tx.Commit()
 	}
 
-	if _, err := orgs.CreateDefaultForUser(ctx, userID); err != nil {
+	org, err := orgs.CreateDefaultForUser(ctx, userID)
+	if err != nil {
 		return fmt.Errorf("create default organization: %w", err)
+	}
+	if err := grantSignupCredits(ctx, tx, userID, org.ID); err != nil {
+		return err
 	}
 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
+}
+
+func grantSignupCredits(ctx context.Context, tx *sql.Tx, userID, organizationID string) error {
+	if err := billingRepository.GrantOn(ctx, tx, billingRepository.GrantParams{
+		OrganizationID: organizationID,
+		AmountMicros:   signupCreditsMicros,
+		IdempotencyKey: "signup-credits:" + userID,
+		Note:           "Welcome credits",
+	}); err != nil {
+		return fmt.Errorf("grant signup credits: %w", err)
 	}
 	return nil
 }

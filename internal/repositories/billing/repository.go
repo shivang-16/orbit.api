@@ -7,6 +7,12 @@ import (
 	"time"
 )
 
+type dbTX interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
 type Repository struct {
 	db *sql.DB
 }
@@ -142,6 +148,24 @@ type GrantParams struct {
 // grant) and bumps the org's granted/remaining balance. Idempotent on
 // IdempotencyKey so a retried webhook delivery never double-grants.
 func (r *Repository) GrantCredits(ctx context.Context, params GrantParams) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin grant tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if err := GrantOn(ctx, tx, params); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit grant tx: %w", err)
+	}
+	return nil
+}
+
+// GrantOn writes a grant ledger row and updates org balances on an existing
+// transaction (signup, webhook, etc.).
+func GrantOn(ctx context.Context, db dbTX, params GrantParams) error {
 	if params.IdempotencyKey == "" {
 		return fmt.Errorf("idempotency key is required")
 	}
@@ -149,13 +173,7 @@ func (r *Repository) GrantCredits(ctx context.Context, params GrantParams) error
 		return fmt.Errorf("amount must be positive")
 	}
 
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin grant tx: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	result, err := tx.ExecContext(
+	result, err := db.ExecContext(
 		ctx,
 		`INSERT INTO credit_ledger (
 			organization_id, entry_type, amount_micros, idempotency_key, note
@@ -175,10 +193,10 @@ func (r *Repository) GrantCredits(ctx context.Context, params GrantParams) error
 		return fmt.Errorf("credit ledger rows: %w", err)
 	}
 	if inserted == 0 {
-		return tx.Commit()
+		return nil
 	}
 
-	_, err = tx.ExecContext(
+	_, err = db.ExecContext(
 		ctx,
 		`UPDATE organizations
 		 SET credits_granted_micros = credits_granted_micros + $1,
@@ -189,10 +207,6 @@ func (r *Repository) GrantCredits(ctx context.Context, params GrantParams) error
 	)
 	if err != nil {
 		return fmt.Errorf("update organization credits: %w", err)
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit grant tx: %w", err)
 	}
 	return nil
 }
