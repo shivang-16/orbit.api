@@ -10,10 +10,12 @@ import (
 	apikeyController "github.com/shivang-16/orbit.api/internal/controller/apikey"
 	catalogueController "github.com/shivang-16/orbit.api/internal/controller/catalogue"
 	healthController "github.com/shivang-16/orbit.api/internal/controller/health"
+	inferenceController "github.com/shivang-16/orbit.api/internal/controller/inference"
 	organizationController "github.com/shivang-16/orbit.api/internal/controller/organization"
 	userController "github.com/shivang-16/orbit.api/internal/controller/user"
 	"github.com/shivang-16/orbit.api/internal/infra/clerk"
 	"github.com/shivang-16/orbit.api/internal/infra/postgres"
+	apikeyMiddleware "github.com/shivang-16/orbit.api/internal/middleware/apikey"
 	apikeyRepository "github.com/shivang-16/orbit.api/internal/repositories/apikey"
 	catalogueRepository "github.com/shivang-16/orbit.api/internal/repositories/catalogue"
 	organizationRepository "github.com/shivang-16/orbit.api/internal/repositories/organization"
@@ -22,6 +24,7 @@ import (
 	apikeyService "github.com/shivang-16/orbit.api/internal/services/apikey"
 	catalogueService "github.com/shivang-16/orbit.api/internal/services/catalogue"
 	healthService "github.com/shivang-16/orbit.api/internal/services/health"
+	inferenceService "github.com/shivang-16/orbit.api/internal/services/inference"
 	organizationService "github.com/shivang-16/orbit.api/internal/services/organization"
 	userService "github.com/shivang-16/orbit.api/internal/services/user"
 )
@@ -61,9 +64,13 @@ func main() {
 	orgSvc := organizationService.NewService(orgRepo)
 	orgCtrl := organizationController.NewController(orgSvc)
 
+	inferenceSvc := inferenceService.NewService(catalogueRepo, cfg.AWSBedrockAPIKey, cfg.AWSBedrockRegion)
+	inferenceCtrl := inferenceController.NewController(inferenceSvc)
+	apiKeyAuth := apikeyMiddleware.New(apiKeyRepo)
+
 	healthSvc := healthService.NewService(db)
 	healthCtrl := healthController.NewController(healthSvc)
-	handler := routes.New(cfg, healthCtrl, userCtrl, catalogueCtrl, apiKeyCtrl, orgCtrl)
+	handler := routes.New(cfg, healthCtrl, userCtrl, catalogueCtrl, apiKeyCtrl, orgCtrl, inferenceCtrl, apiKeyAuth)
 
 	addr := ":" + cfg.Port
 	log.Printf("orbit.api listening on %s (%s)", addr, cfg.Env)

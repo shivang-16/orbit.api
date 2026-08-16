@@ -9,11 +9,13 @@ import (
 )
 
 type Config struct {
-	Port           string
-	Env            string
-	CORSOrigins    []string
-	ClerkSecretKey string
-	Postgres       Postgres
+	Port             string
+	Env              string
+	CORSOrigins      []string
+	ClerkSecretKey   string
+	Postgres         Postgres
+	AWSBedrockAPIKey string
+	AWSBedrockRegion string
 }
 
 type Postgres struct {
@@ -46,6 +48,8 @@ func Load() Config {
 			Password: env("POSTGRES_PASSWORD", "postgres"),
 			DBName:   env("POSTGRES_DB", "orbit"),
 		},
+		AWSBedrockAPIKey: env("AWS_BEDROCK_API_KEY", ""),
+		AWSBedrockRegion: env("AWS_BEDROCK_REGION", "us-east-1"),
 	}
 }
 

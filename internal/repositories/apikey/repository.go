@@ -3,12 +3,14 @@ package apikey
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"time"
 
 	"github.com/shivang-16/orbit.api/internal/model"
 )
 
 type dbTX interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
@@ -109,6 +111,50 @@ func (r *Repository) ListByOrganization(ctx context.Context, organizationID stri
 		return nil, err
 	}
 	return keys, nil
+}
+
+// GetActiveByHash resolves a usable key by its hash in a single indexed
+// lookup, filtering out revoked or expired keys in the same query so the
+// hot inference path never needs a second round trip.
+func (r *Repository) GetActiveByHash(ctx context.Context, hash string) (*model.APIKey, error) {
+	item := model.APIKey{}
+	var expiresScan, lastUsedScan sql.NullTime
+	err := r.db.QueryRowContext(
+		ctx,
+		`SELECT id, organization_id, created_by, name, key_preview,
+		        expires_at, last_used_at, created_at, updated_at
+		 FROM api_keys
+		 WHERE key_hash = $1
+		   AND revoked_at IS NULL
+		   AND (expires_at IS NULL OR expires_at > now())`,
+		hash,
+	).Scan(
+		&item.ID,
+		&item.OrganizationID,
+		&item.CreatedBy,
+		&item.Name,
+		&item.KeyPreview,
+		&expiresScan,
+		&lastUsedScan,
+		&item.CreatedAt,
+		&item.UpdatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	item.ExpiresAt = nullTime(expiresScan)
+	item.LastUsedAt = nullTime(lastUsedScan)
+	return &item, nil
+}
+
+// TouchLastUsed records key usage. Callers should fire this off in a
+// goroutine so it never adds latency to the request the key authenticated.
+func (r *Repository) TouchLastUsed(ctx context.Context, id string) error {
+	_, err := r.db.ExecContext(ctx, `UPDATE api_keys SET last_used_at = now() WHERE id = $1`, id)
+	return err
 }
 
 func nullTime(value sql.NullTime) *time.Time {
