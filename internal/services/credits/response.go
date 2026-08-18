@@ -11,15 +11,15 @@ type OrganizationCreditsResponse struct {
 }
 
 type HistoryEntry struct {
-	ID             string    `json:"id"`
-	EntryType      string    `json:"entry_type"`
-	TypeLabel      string    `json:"type_label"`
-	ModelName      string    `json:"model_name"`
-	InputTokens    int       `json:"input_tokens"`
-	OutputTokens   int       `json:"output_tokens"`
-	LatencyMS      int       `json:"latency_ms"`
-	AmountMicros   int64     `json:"amount_micros"`
-	CreatedAt      time.Time `json:"created_at"`
+	ID           string    `json:"id"`
+	EntryType    string    `json:"entry_type"`
+	TypeLabel    string    `json:"type_label"`
+	ModelName    string    `json:"model_name"`
+	InputTokens  int       `json:"input_tokens"`
+	OutputTokens int       `json:"output_tokens"`
+	LatencyMS    int       `json:"latency_ms"`
+	AmountMicros int64     `json:"amount_micros"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 type HistoryResponse struct {
@@ -52,13 +52,13 @@ type UsageRequest struct {
 }
 
 type UsageResponse struct {
-	Range        string          `json:"range"`
-	From         time.Time       `json:"from"`
-	To           time.Time       `json:"to"`
-	InputTokens  int64           `json:"input_tokens"`
-	OutputTokens int64           `json:"output_tokens"`
-	TotalTokens  int64           `json:"total_tokens"`
-	CostMicros   int64           `json:"cost_micros"`
-	Series       []UsageDay      `json:"series"`
-	Requests     []UsageRequest  `json:"requests"`
+	Range        string         `json:"range"`
+	From         time.Time      `json:"from"`
+	To           time.Time      `json:"to"`
+	InputTokens  int64          `json:"input_tokens"`
+	OutputTokens int64          `json:"output_tokens"`
+	TotalTokens  int64          `json:"total_tokens"`
+	CostMicros   int64          `json:"cost_micros"`
+	Series       []UsageDay     `json:"series"`
+	Requests     []UsageRequest `json:"requests"`
 }
