@@ -50,5 +50,8 @@ func DecodeJob(body string) (Job, error) {
 	if job.OrganizationID == "" {
 		return Job{}, fmt.Errorf("billing job missing organization_id")
 	}
+	if job.IdempotencyKey == "" {
+		return Job{}, fmt.Errorf("billing job missing idempotency_key")
+	}
 	return job, nil
 }

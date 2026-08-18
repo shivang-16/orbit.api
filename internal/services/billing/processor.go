@@ -20,7 +20,7 @@ func NewProcessor(billing *billingRepository.Repository, pricing *pricingReposit
 
 func (p *Processor) Process(ctx context.Context, job Job) error {
 	if job.IdempotencyKey == "" {
-		job.IdempotencyKey = NewIdempotencyKey()
+		return fmt.Errorf("idempotency key is required")
 	}
 
 	var vendorAmount int64
@@ -29,11 +29,10 @@ func (p *Processor) Process(ctx context.Context, job Job) error {
 		if err != nil {
 			return fmt.Errorf("load price: %w", err)
 		}
-		if price != nil {
-			vendorAmount = chargeMicros(job.InputTokens, job.OutputTokens, price.VendorInputPerMillionMicros, price.VendorOutputPerMillionMicros)
-		} else {
-			log.Printf("billing: no pricing row for model=%s org=%s — charging 0", job.ModelCatalogueID, job.OrganizationID)
+		if price == nil {
+			return fmt.Errorf("no pricing row for model=%s", job.ModelCatalogueID)
 		}
+		vendorAmount = chargeMicros(job.InputTokens, job.OutputTokens, price.VendorInputPerMillionMicros, price.VendorOutputPerMillionMicros)
 	}
 
 	if err := p.billing.Record(ctx, billingRepository.RecordParams{

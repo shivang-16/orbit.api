@@ -3,11 +3,13 @@ package sqs
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	awssqs "github.com/aws/aws-sdk-go-v2/service/sqs"
+	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 
 	appconfig "github.com/shivang-16/orbit.api/internal/config"
 )
@@ -15,6 +17,7 @@ import (
 type Message struct {
 	Body          string
 	ReceiptHandle string
+	ReceiveCount  int
 }
 
 type Client struct {
@@ -66,7 +69,10 @@ func (c *Client) Receive(ctx context.Context, max int32) ([]Message, error) {
 		QueueUrl:            aws.String(c.queueURL),
 		MaxNumberOfMessages: max,
 		WaitTimeSeconds:     20,
-		VisibilityTimeout:   30,
+		VisibilityTimeout:   90,
+		MessageSystemAttributeNames: []types.MessageSystemAttributeName{
+			types.MessageSystemAttributeNameApproximateReceiveCount,
+		},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("sqs receive: %w", err)
@@ -77,9 +83,22 @@ func (c *Client) Receive(ctx context.Context, max int32) ([]Message, error) {
 		messages = append(messages, Message{
 			Body:          aws.ToString(msg.Body),
 			ReceiptHandle: aws.ToString(msg.ReceiptHandle),
+			ReceiveCount:  receiveCount(msg.Attributes),
 		})
 	}
 	return messages, nil
+}
+
+func receiveCount(attrs map[string]string) int {
+	raw, ok := attrs["ApproximateReceiveCount"]
+	if !ok {
+		return 0
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 func (c *Client) Delete(ctx context.Context, receiptHandle string) error {
