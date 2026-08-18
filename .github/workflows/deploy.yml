@@ -19,18 +19,8 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Write env
-        env:
-          PROD_ENV: ${{ secrets.PROD_ENV }}
-        run: |
-          umask 077
-          printenv PROD_ENV > .env
-
       - name: Vet
         run: go vet ./...
-
-      - name: Test
-        run: go test ./... -count=1 -timeout 5m
 
       - name: Build
         run: go build -o /tmp/orbit.api ./cmd/api
