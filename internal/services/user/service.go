@@ -14,7 +14,7 @@ import (
 	userRepository "github.com/shivang-16/orbit.api/internal/repositories/user"
 )
 
-const signupCreditsMicros int64 = 5_000_000
+const signupCreditsMicros int64 = 2_000_000
 
 type Service struct {
 	db    *sql.DB
