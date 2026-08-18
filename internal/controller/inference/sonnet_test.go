@@ -73,7 +73,7 @@ func TestChatSonnet45(t *testing.T) {
 		pricingRepository.NewRepository(db.DB()),
 	)
 	svc := inferenceService.NewService(catalogueRepo, orgRepo, cfg.AWSBedrockAPIKey, cfg.AWSBedrockRegion)
-	ctrl := inferenceController.NewController(svc, billingWorker)
+	ctrl := inferenceController.NewController(svc, billingWorker, orgRepo)
 
 	r := chi.NewRouter()
 	r.Use(apikeyMiddleware.New(apiKeyRepo).Authenticate)
@@ -175,7 +175,7 @@ func TestChatSonnet45Stream(t *testing.T) {
 		pricingRepository.NewRepository(db.DB()),
 	)
 	svc := inferenceService.NewService(catalogueRepo, orgRepo, cfg.AWSBedrockAPIKey, cfg.AWSBedrockRegion)
-	ctrl := inferenceController.NewController(svc, billingWorker)
+	ctrl := inferenceController.NewController(svc, billingWorker, orgRepo)
 
 	r := chi.NewRouter()
 	r.Use(apikeyMiddleware.New(apiKeyRepo).Authenticate)

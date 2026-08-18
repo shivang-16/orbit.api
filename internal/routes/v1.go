@@ -67,6 +67,15 @@ func registerV1(
 		})
 	})
 
+	// Dashboard playground: Clerk session instead of an API key, billed
+	// to the active organization. Same 5-minute timeout as API-key chat
+	// so a streamed completion is not cut off by the 30s dashboard budget.
+	r.Group(func(r chi.Router) {
+		r.Use(authMiddleware.Clerk)
+		r.Use(middleware.Timeout(5 * time.Minute))
+		r.Post("/playground/models/{id}/chat", inference.Playground)
+	})
+
 	// Authenticated with an Orbit API key (sk-orbit-...) instead of a Clerk
 	// session, since this is the surface external callers hit directly.
 	// This same group carries the native chat route plus the

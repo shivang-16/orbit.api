@@ -71,6 +71,13 @@ func APIKeyID(ctx context.Context) (string, bool) {
 	return id, ok && id != ""
 }
 
+// WithOrganization attaches an organization to the request context the
+// same way Authenticate does, without an API key. Used by the dashboard
+// playground so session-authenticated chat is billed to the active org.
+func WithOrganization(ctx context.Context, organizationID string) context.Context {
+	return context.WithValue(ctx, organizationIDKey, organizationID)
+}
+
 // credential extracts the Orbit API key from a request, accepting both
 // "Authorization: Bearer sk-orbit-..." (the OpenAI SDK and Orbit's own
 // convention) and "x-api-key: sk-orbit-..." (the Anthropic SDK's default),
