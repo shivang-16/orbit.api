@@ -1,0 +1,89 @@
+name: Test and Deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Write env
+        env:
+          PROD_ENV: ${{ secrets.PROD_ENV }}
+        run: |
+          umask 077
+          printenv PROD_ENV > .env
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./... -count=1 -timeout 5m
+
+      - name: Build
+        run: go build -o /tmp/orbit.api ./cmd/api
+
+  deploy:
+    name: Deploy
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Write env
+        env:
+          PROD_ENV: ${{ secrets.PROD_ENV }}
+        run: |
+          umask 077
+          printenv PROD_ENV > .env
+
+      - name: Build
+        run: |
+          mkdir -p bin
+          go build -o bin/orbit.api.tmp ./cmd/api
+          mv -f bin/orbit.api.tmp bin/orbit.api
+          chmod +x bin/orbit.api
+
+      - name: Start or create PM2 services
+        run: |
+          if pm2 describe orbit.api >/dev/null 2>&1; then
+            pm2 reload orbit.api --update-env
+          else
+            pm2 start ecosystem.config.js --only orbit.api
+          fi
+
+          if pm2 describe orbit.billing >/dev/null 2>&1; then
+            pm2 reload orbit.billing --update-env
+          else
+            pm2 start ecosystem.config.js --only orbit.billing
+          fi
+
+          pm2 save
+          pm2 status
+
+      - name: Health check
+        run: |
+          set -a
+          # shellcheck disable=SC1091
+          source .env
+          set +a
+          sleep 2
+          curl -fsS "http://127.0.0.1:${PORT:-8080}/health"
+          curl -fsS "http://127.0.0.1:${PORT:-8080}/ready"

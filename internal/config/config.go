@@ -44,12 +44,13 @@ type Postgres struct {
 	User     string
 	Password string
 	DBName   string
+	SSLMode  string
 }
 
 func (p Postgres) DSN() string {
 	return fmt.Sprintf(
-		"host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
-		p.Host, p.Port, p.User, p.Password, p.DBName,
+		"host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
+		p.Host, p.Port, p.User, p.Password, p.DBName, p.SSLMode,
 	)
 }
 
@@ -68,6 +69,7 @@ func Load() Config {
 			User:     env("POSTGRES_USER", "postgres"),
 			Password: env("POSTGRES_PASSWORD", "postgres"),
 			DBName:   env("POSTGRES_DB", "orbit"),
+			SSLMode:  env("POSTGRES_SSLMODE", "disable"),
 		},
 		AWSBedrockAPIKey: env("AWS_BEDROCK_API_KEY", ""),
 		AWSBedrockRegion: env("AWS_BEDROCK_REGION", "us-east-1"),
