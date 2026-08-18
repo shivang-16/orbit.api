@@ -32,7 +32,7 @@ func (c *Controller) Chat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := c.service.Chat(r.Context(), modelID, req)
+	result, err := c.service.Chat(r.Context(), modelID, req, w)
 	if err != nil {
 		orgID, _ := apikeyMiddleware.OrganizationID(r.Context())
 		log.Printf("inference/chat failed model=%s org=%s: %v", modelID, orgID, err)
@@ -51,9 +51,14 @@ func (c *Controller) Chat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(result.StatusCode)
-	_, _ = w.Write(result.Body)
+	// When result.Streamed is true, the service already wrote the status
+	// line, headers, and every SSE chunk directly to w — nothing left to
+	// write here. Otherwise this is the buffered ("stream": false) path.
+	if !result.Streamed {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(result.StatusCode)
+		_, _ = w.Write(result.Body)
+	}
 
 	orgID, _ := apikeyMiddleware.OrganizationID(r.Context())
 	apiKeyID, _ := apikeyMiddleware.APIKeyID(r.Context())
@@ -61,8 +66,12 @@ func (c *Controller) Chat(w http.ResponseWriter, r *http.Request) {
 	errText := ""
 	if result.StatusCode < 200 || result.StatusCode >= 300 {
 		status = "error"
-		errText = truncate(string(result.Body), 500)
-		log.Printf("inference/chat provider error model=%s org=%s status=%d: %s", modelID, orgID, result.StatusCode, errText)
+		if result.Streamed {
+			errText = "stream interrupted"
+		} else {
+			errText = truncate(string(result.Body), 500)
+		}
+		log.Printf("inference/chat provider error model=%s org=%s status=%d streamed=%t: %s", modelID, orgID, result.StatusCode, result.Streamed, errText)
 	}
 
 	if c.billing == nil {
