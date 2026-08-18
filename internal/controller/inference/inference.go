@@ -34,7 +34,8 @@ func (c *Controller) Chat(w http.ResponseWriter, r *http.Request) {
 
 	result, err := c.service.Chat(r.Context(), modelID, req)
 	if err != nil {
-		log.Printf("inference/chat failed model=%s: %v", modelID, err)
+		orgID, _ := apikeyMiddleware.OrganizationID(r.Context())
+		log.Printf("inference/chat failed model=%s org=%s: %v", modelID, orgID, err)
 		switch {
 		case errors.Is(err, inferenceService.ErrInvalid):
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "messages are required"})
@@ -42,6 +43,8 @@ func (c *Controller) Chat(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "model not found"})
 		case errors.Is(err, inferenceService.ErrUnsupportedProvider):
 			writeJSON(w, http.StatusBadGateway, map[string]string{"error": "model provider not supported yet"})
+		case errors.Is(err, inferenceService.ErrLowCredits):
+			writeJSON(w, http.StatusPaymentRequired, map[string]string{"error": "low on credits"})
 		default:
 			writeJSON(w, http.StatusBadGateway, map[string]string{"error": "failed to reach model provider"})
 		}

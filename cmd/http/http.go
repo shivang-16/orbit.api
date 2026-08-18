@@ -77,7 +77,7 @@ func Start(_ context.Context, cfg config.Config) {
 	orgSvc := organizationService.NewService(orgRepo)
 	orgCtrl := organizationController.NewController(orgSvc)
 
-	inferenceSvc := inferenceService.NewService(catalogueRepo, cfg.AWSBedrockAPIKey, cfg.AWSBedrockRegion)
+	inferenceSvc := inferenceService.NewService(catalogueRepo, orgRepo, cfg.AWSBedrockAPIKey, cfg.AWSBedrockRegion)
 	inferenceCtrl := inferenceController.NewController(inferenceSvc, billingPublisher)
 	apiKeyAuth := apikeyMiddleware.New(apiKeyRepo)
 

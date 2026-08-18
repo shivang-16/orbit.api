@@ -169,6 +169,24 @@ func (r *Repository) GetByID(ctx context.Context, id string) (*model.Organizatio
 	return &org, nil
 }
 
+// GetCreditsRemaining is a lightweight read used on the hot inference path
+// to gate requests on balance without loading the full organization row.
+// ok is false if the organization does not exist.
+func (r *Repository) GetCreditsRemaining(ctx context.Context, id string) (remaining int64, ok bool, err error) {
+	err = r.db.QueryRowContext(
+		ctx,
+		`SELECT credits_remaining_micros FROM organizations WHERE id = $1`,
+		id,
+	).Scan(&remaining)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	return remaining, true, nil
+}
+
 func (r *Repository) GetFirstForUser(ctx context.Context, userID string) (*model.Organization, error) {
 	org := model.Organization{}
 	err := r.db.QueryRowContext(

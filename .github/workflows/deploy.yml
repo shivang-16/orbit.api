@@ -44,6 +44,9 @@ jobs:
           umask 077
           printenv PROD_ENV > .env
 
+      - name: Run database migrations
+        run: go run ./cmd/migrate
+
       - name: Build
         run: |
           mkdir -p bin

@@ -11,18 +11,36 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"time"
 
+	apikeyMiddleware "github.com/shivang-16/orbit.api/internal/middleware/apikey"
 	catalogueRepository "github.com/shivang-16/orbit.api/internal/repositories/catalogue"
+	organizationRepository "github.com/shivang-16/orbit.api/internal/repositories/organization"
 )
 
 var (
 	ErrInvalid             = errors.New("invalid request")
 	ErrModelNotFound       = errors.New("model not found")
 	ErrUnsupportedProvider = errors.New("model provider not supported yet")
+	// ErrLowCredits is returned when an organization's remaining balance is
+	// below lowBalanceThresholdMicros. Checked synchronously before calling
+	// the model provider so a request never gets a paid response while out
+	// of credit. See internal/repositories/billing.Repository.Record for the
+	// matching post-request deduction, which is allowed to take the balance
+	// negative for the single request that crosses the threshold.
+	ErrLowCredits = errors.New("low on credits")
 )
+
+// lowBalanceThresholdMicros is $1.00 (1_000_000 micros = $1, matching the
+// credits_micros/price_micros convention used across billing). Organizations
+// at or above this remaining balance may proceed, even if the request that
+// follows costs more than what's left — that one request is allowed to take
+// the balance negative, to be settled by the organization's next credit
+// grant/payment.
+const lowBalanceThresholdMicros int64 = 1_000_000
 
 // httpClient is shared across every request so TCP/TLS connections to the
 // provider are pooled and reused instead of re-established per call, which
@@ -38,12 +56,17 @@ var httpClient = &http.Client{
 
 type Service struct {
 	catalogue     *catalogueRepository.Repository
+	orgs          *organizationRepository.Repository
 	bedrockAPIKey string
 	bedrockRegion string
 }
 
-func NewService(catalogue *catalogueRepository.Repository, bedrockAPIKey, bedrockRegion string) *Service {
-	return &Service{catalogue: catalogue, bedrockAPIKey: bedrockAPIKey, bedrockRegion: bedrockRegion}
+func NewService(
+	catalogue *catalogueRepository.Repository,
+	orgs *organizationRepository.Repository,
+	bedrockAPIKey, bedrockRegion string,
+) *Service {
+	return &Service{catalogue: catalogue, orgs: orgs, bedrockAPIKey: bedrockAPIKey, bedrockRegion: bedrockRegion}
 }
 
 type ChatResult struct {
@@ -58,6 +81,10 @@ type ChatResult struct {
 func (s *Service) Chat(ctx context.Context, modelID string, req ChatRequest) (*ChatResult, error) {
 	if !req.isValid() {
 		return nil, ErrInvalid
+	}
+
+	if err := s.requireCredits(ctx); err != nil {
+		return nil, err
 	}
 
 	entry, err := s.catalogue.GetByID(ctx, modelID)
@@ -113,6 +140,36 @@ func (s *Service) Chat(ctx context.Context, modelID string, req ChatRequest) (*C
 		OutputTokens:     outputTokens,
 		LatencyMS:        latencyMS,
 	}, nil
+}
+
+// requireCredits is the hard pre-flight balance check: any organization
+// below lowBalanceThresholdMicros is rejected before we ever call the model
+// provider, so a $0-balance key can't keep getting billed inference. If the
+// org has at least the threshold, the request is allowed through even
+// though its actual cost may exceed what's left — that overage is expected
+// to be settled by the next credit grant (see ErrLowCredits godoc).
+func (s *Service) requireCredits(ctx context.Context) error {
+	if s.orgs == nil {
+		return nil
+	}
+	orgID, ok := apikeyMiddleware.OrganizationID(ctx)
+	if !ok || orgID == "" {
+		return nil
+	}
+
+	remaining, found, err := s.orgs.GetCreditsRemaining(ctx, orgID)
+	if err != nil {
+		return fmt.Errorf("check credits: %w", err)
+	}
+	if !found {
+		log.Printf("inference: org=%s not found on credit check — blocking", orgID)
+		return ErrLowCredits
+	}
+	if remaining < lowBalanceThresholdMicros {
+		log.Printf("inference: org=%s blocked, remaining_micros=%d below threshold=%d", orgID, remaining, lowBalanceThresholdMicros)
+		return ErrLowCredits
+	}
+	return nil
 }
 
 func parseBedrockUsage(body []byte) (inputTokens, outputTokens, latencyMS int) {

@@ -23,6 +23,7 @@ import (
 	apikeyRepository "github.com/shivang-16/orbit.api/internal/repositories/apikey"
 	billingRepository "github.com/shivang-16/orbit.api/internal/repositories/billing"
 	catalogueRepository "github.com/shivang-16/orbit.api/internal/repositories/catalogue"
+	organizationRepository "github.com/shivang-16/orbit.api/internal/repositories/organization"
 	pricingRepository "github.com/shivang-16/orbit.api/internal/repositories/pricing"
 	apikeyService "github.com/shivang-16/orbit.api/internal/services/apikey"
 	billingService "github.com/shivang-16/orbit.api/internal/services/billing"
@@ -64,11 +65,12 @@ func TestChatSonnet45(t *testing.T) {
 
 	catalogueRepo := catalogueRepository.NewRepository(db.DB())
 	apiKeyRepo := apikeyRepository.NewRepository(db.DB())
+	orgRepo := organizationRepository.NewRepository(db.DB())
 	billingWorker := billingService.NewWorker(
 		billingRepository.NewRepository(db.DB()),
 		pricingRepository.NewRepository(db.DB()),
 	)
-	svc := inferenceService.NewService(catalogueRepo, cfg.AWSBedrockAPIKey, cfg.AWSBedrockRegion)
+	svc := inferenceService.NewService(catalogueRepo, orgRepo, cfg.AWSBedrockAPIKey, cfg.AWSBedrockRegion)
 	ctrl := inferenceController.NewController(svc, billingWorker)
 
 	r := chi.NewRouter()

@@ -117,11 +117,17 @@ func (r *Repository) Record(ctx context.Context, params RecordParams) error {
 			return tx.Commit()
 		}
 
+		// credits_remaining_micros is intentionally allowed to go negative
+		// here: the pre-flight check in inference.Service blocks new
+		// requests once remaining drops below the $1 threshold, but the
+		// single request that crosses that threshold is allowed to finish
+		// and its actual cost is deducted in full. The organization settles
+		// the negative balance on its next credit grant/payment.
 		_, err = tx.ExecContext(
 			ctx,
 			`UPDATE organizations
 			 SET credits_used_micros = credits_used_micros + $1,
-			     credits_remaining_micros = GREATEST(credits_remaining_micros - $1, 0)
+			     credits_remaining_micros = credits_remaining_micros - $1
 			 WHERE id = $2`,
 			params.AmountMicros,
 			params.OrganizationID,
