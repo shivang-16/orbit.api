@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	authMiddleware "github.com/shivang-16/orbit.api/internal/middleware/auth"
 	billingRepository "github.com/shivang-16/orbit.api/internal/repositories/billing"
@@ -69,17 +70,96 @@ func (s *Service) ListOrganizationCreditHistory(ctx context.Context, organizatio
 			amount = -amount
 		}
 		entries = append(entries, HistoryEntry{
-			ID:             row.ID,
-			EntryType:      row.EntryType,
-			TypeLabel:      typeLabel(row.EntryType),
-			Description:    historyDescription(row),
-			AmountMicros:   amount,
-			IdempotencyKey: row.IdempotencyKey,
-			CreatedAt:      row.CreatedAt,
+			ID:           row.ID,
+			EntryType:    row.EntryType,
+			TypeLabel:    typeLabel(row.EntryType),
+			ModelName:    historyModelName(row),
+			InputTokens:  row.InputTokens,
+			OutputTokens: row.OutputTokens,
+			LatencyMS:    row.LatencyMS,
+			AmountMicros: amount,
+			CreatedAt:    row.CreatedAt,
 		})
 	}
 
 	return &HistoryResponse{Entries: entries, Total: len(entries)}, nil
+}
+
+func (s *Service) GetUsage(ctx context.Context, organizationID, preset string) (*UsageResponse, error) {
+	orgID, err := s.orgIDForUser(ctx, organizationID)
+	if err != nil {
+		return nil, err
+	}
+
+	window, err := parseUsageRange(preset, time.Now())
+	if err != nil {
+		return nil, err
+	}
+
+	daily, err := s.billing.ListUsageDaily(ctx, orgID, window.From, window.To)
+	if err != nil {
+		return nil, fmt.Errorf("list usage daily: %w", err)
+	}
+	requests, err := s.billing.ListUsageRequests(ctx, orgID, window.From, window.To)
+	if err != nil {
+		return nil, fmt.Errorf("list usage requests: %w", err)
+	}
+	costMicros, err := s.billing.SumUsageCost(ctx, orgID, window.From, window.To)
+	if err != nil {
+		return nil, fmt.Errorf("sum usage cost: %w", err)
+	}
+
+	byDay := map[string][]UsageModelPoint{}
+	var inputTotal, outputTotal int64
+	for _, row := range daily {
+		day := row.Day.UTC().Format("2006-01-02")
+		total := row.InputTokens + row.OutputTokens
+		inputTotal += row.InputTokens
+		outputTotal += row.OutputTokens
+		byDay[day] = append(byDay[day], UsageModelPoint{
+			ModelID:      row.ModelID,
+			ModelName:    row.ModelName,
+			InputTokens:  row.InputTokens,
+			OutputTokens: row.OutputTokens,
+			TotalTokens:  total,
+		})
+	}
+
+	series := make([]UsageDay, 0)
+	for _, day := range eachUTCDay(window.From, window.To) {
+		key := day.Format("2006-01-02")
+		models := byDay[key]
+		if models == nil {
+			models = []UsageModelPoint{}
+		}
+		series = append(series, UsageDay{Date: key, Models: models})
+	}
+
+	outRequests := make([]UsageRequest, 0, len(requests))
+	for _, row := range requests {
+		outRequests = append(outRequests, UsageRequest{
+			ID:           row.ID,
+			CreatedAt:    row.CreatedAt,
+			ModelName:    row.ModelName,
+			InputTokens:  row.InputTokens,
+			OutputTokens: row.OutputTokens,
+			LatencyMS:    row.LatencyMS,
+			AmountMicros: -row.AmountMicros,
+			Status:       row.Status,
+		})
+	}
+
+	return &UsageResponse{
+		Range:        window.Preset,
+		From:         window.From,
+		To:           window.To,
+		InputTokens:  inputTotal,
+		OutputTokens: outputTotal,
+		TotalTokens:  inputTotal + outputTotal,
+		CostMicros:   costMicros,
+		Series:       series,
+		Requests:     outRequests,
+	}, nil
 }
 
 func (s *Service) orgIDForUser(ctx context.Context, organizationID string) (string, error) {
@@ -123,6 +203,16 @@ func typeLabel(entryType string) string {
 	default:
 		return entryType
 	}
+}
+
+func historyModelName(row billingRepository.HistoryRow) string {
+	if row.EntryType == "usage" {
+		if row.ModelName != "" {
+			return row.ModelName
+		}
+		return "Inference"
+	}
+	return historyDescription(row)
 }
 
 func historyDescription(row billingRepository.HistoryRow) string {

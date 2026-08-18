@@ -58,6 +58,7 @@ func registerV1(
 			r.Post("/billing/checkout", checkout.Create)
 			r.Get("/billing/credits", credits.GetOrganizationCredits)
 			r.Get("/billing/credits/history", credits.ListOrganizationCreditHistory)
+			r.Get("/usage", credits.GetUsage)
 		})
 	})
 

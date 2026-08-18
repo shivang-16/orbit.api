@@ -38,6 +38,20 @@ func (c *Controller) ListOrganizationCreditHistory(w http.ResponseWriter, r *htt
 	writeJSON(w, http.StatusOK, resp)
 }
 
+func (c *Controller) GetUsage(w http.ResponseWriter, r *http.Request) {
+	resp, err := c.service.GetUsage(r.Context(), organizationID(r), r.URL.Query().Get("range"))
+	if err != nil {
+		log.Printf("usage/get org=%s range=%s: %v", organizationID(r), r.URL.Query().Get("range"), err)
+		if errors.Is(err, creditsService.ErrInvalidRange) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid range"})
+			return
+		}
+		writeServiceError(w, err, "failed to load usage")
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
 func writeServiceError(w http.ResponseWriter, err error, fallback string) {
 	switch {
 	case errors.Is(err, creditsService.ErrNoOrganization):

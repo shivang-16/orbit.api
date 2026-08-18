@@ -230,6 +230,7 @@ type HistoryRow struct {
 	ModelName          string
 	InputTokens        int
 	OutputTokens       int
+	LatencyMS          int
 }
 
 func (r *Repository) ListHistory(ctx context.Context, organizationID string) ([]HistoryRow, error) {
@@ -240,7 +241,8 @@ func (r *Repository) ListHistory(ctx context.Context, organizationID string) ([]
 		        cl.created_at,
 		        COALESCE(mc.name, ''),
 		        COALESCE(ir.input_tokens, 0),
-		        COALESCE(ir.output_tokens, 0)
+		        COALESCE(ir.output_tokens, 0),
+		        COALESCE(ir.latency_ms, 0)
 		 FROM credit_ledger cl
 		 LEFT JOIN inference_requests ir ON ir.id = cl.inference_request_id
 		 LEFT JOIN model_catalogue mc ON mc.id = ir.model_catalogue_id
@@ -270,10 +272,128 @@ func (r *Repository) ListHistory(ctx context.Context, organizationID string) ([]
 			&row.ModelName,
 			&row.InputTokens,
 			&row.OutputTokens,
+			&row.LatencyMS,
 		); err != nil {
 			return nil, err
 		}
 		entries = append(entries, row)
 	}
 	return entries, rows.Err()
+}
+
+type UsageDailyRow struct {
+	Day          time.Time
+	ModelID      string
+	ModelName    string
+	InputTokens  int64
+	OutputTokens int64
+}
+
+type UsageRequestRow struct {
+	ID           string
+	CreatedAt    time.Time
+	ModelName    string
+	InputTokens  int
+	OutputTokens int
+	LatencyMS    int
+	AmountMicros int64
+	Status       string
+}
+
+func (r *Repository) SumUsageCost(ctx context.Context, organizationID string, from, to time.Time) (int64, error) {
+	var total int64
+	err := r.db.QueryRowContext(
+		ctx,
+		`SELECT COALESCE(SUM(cl.amount_micros), 0)
+		 FROM credit_ledger cl
+		 WHERE cl.organization_id = $1
+		   AND cl.entry_type = 'usage'
+		   AND cl.created_at >= $2
+		   AND cl.created_at < $3`,
+		organizationID,
+		from,
+		to,
+	).Scan(&total)
+	return total, err
+}
+
+func (r *Repository) ListUsageDaily(ctx context.Context, organizationID string, from, to time.Time) ([]UsageDailyRow, error) {
+	rows, err := r.db.QueryContext(
+		ctx,
+		`SELECT (ir.created_at AT TIME ZONE 'UTC')::date AS day,
+		        COALESCE(mc.id::text, ''),
+		        COALESCE(NULLIF(mc.name, ''), 'Unknown'),
+		        COALESCE(SUM(ir.input_tokens), 0),
+		        COALESCE(SUM(ir.output_tokens), 0)
+		 FROM inference_requests ir
+		 LEFT JOIN model_catalogue mc ON mc.id = ir.model_catalogue_id
+		 WHERE ir.organization_id = $1
+		   AND ir.created_at >= $2
+		   AND ir.created_at < $3
+		   AND ir.status = 'success'
+		 GROUP BY 1, 2, 3
+		 ORDER BY 1 ASC, 3 ASC`,
+		organizationID,
+		from,
+		to,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]UsageDailyRow, 0)
+	for rows.Next() {
+		var row UsageDailyRow
+		if err := rows.Scan(&row.Day, &row.ModelID, &row.ModelName, &row.InputTokens, &row.OutputTokens); err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
+func (r *Repository) ListUsageRequests(ctx context.Context, organizationID string, from, to time.Time) ([]UsageRequestRow, error) {
+	rows, err := r.db.QueryContext(
+		ctx,
+		`SELECT ir.id, ir.created_at,
+		        COALESCE(NULLIF(mc.name, ''), 'Unknown'),
+		        ir.input_tokens, ir.output_tokens, ir.latency_ms,
+		        COALESCE(cl.amount_micros, 0),
+		        ir.status
+		 FROM inference_requests ir
+		 LEFT JOIN model_catalogue mc ON mc.id = ir.model_catalogue_id
+		 LEFT JOIN credit_ledger cl ON cl.inference_request_id = ir.id AND cl.entry_type = 'usage'
+		 WHERE ir.organization_id = $1
+		   AND ir.created_at >= $2
+		   AND ir.created_at < $3
+		 ORDER BY ir.created_at DESC
+		 LIMIT 200`,
+		organizationID,
+		from,
+		to,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]UsageRequestRow, 0)
+	for rows.Next() {
+		var row UsageRequestRow
+		if err := rows.Scan(
+			&row.ID,
+			&row.CreatedAt,
+			&row.ModelName,
+			&row.InputTokens,
+			&row.OutputTokens,
+			&row.LatencyMS,
+			&row.AmountMicros,
+			&row.Status,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
 }
