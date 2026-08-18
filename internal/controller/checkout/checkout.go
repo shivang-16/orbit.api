@@ -3,6 +3,7 @@ package checkout
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 
 	checkoutService "github.com/shivang-16/orbit.api/internal/services/checkout"
@@ -21,15 +22,18 @@ func NewController(service *checkoutService.Service) *Controller {
 func (c *Controller) Create(w http.ResponseWriter, r *http.Request) {
 	var req checkoutService.CreateCheckoutRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Printf("checkout/create: invalid json: %v", err)
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
 		return
 	}
 
 	resp, err := c.service.CreateCheckout(r.Context(), req)
 	if err != nil {
+		log.Printf("checkout/create failed plan=%s org=%s: %v", req.PlanSlug, req.OrganizationID, err)
 		writeServiceError(w, err)
 		return
 	}
+	log.Printf("checkout/create ok plan=%s org=%s", req.PlanSlug, req.OrganizationID)
 	writeJSON(w, http.StatusOK, resp)
 }
 

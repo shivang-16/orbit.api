@@ -3,6 +3,7 @@ package apikey
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strings"
 
@@ -20,6 +21,7 @@ func NewController(service *apikeyService.Service) *Controller {
 func (c *Controller) List(w http.ResponseWriter, r *http.Request) {
 	resp, err := c.service.List(r.Context(), organizationID(r))
 	if err != nil {
+		log.Printf("api-keys/list org=%s: %v", organizationID(r), err)
 		writeServiceError(w, err, "failed to list api keys")
 		return
 	}
@@ -38,9 +40,11 @@ func (c *Controller) Create(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := c.service.Create(r.Context(), req)
 	if err != nil {
+		log.Printf("api-keys/create org=%s: %v", req.OrganizationID, err)
 		writeServiceError(w, err, "failed to create api key")
 		return
 	}
+	log.Printf("api-keys/create ok org=%s", req.OrganizationID)
 	writeJSON(w, http.StatusCreated, resp)
 }
 

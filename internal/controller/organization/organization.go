@@ -3,6 +3,7 @@ package organization
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 
 	organizationService "github.com/shivang-16/orbit.api/internal/services/organization"
@@ -19,6 +20,7 @@ func NewController(service *organizationService.Service) *Controller {
 func (c *Controller) List(w http.ResponseWriter, r *http.Request) {
 	resp, err := c.service.List(r.Context())
 	if err != nil {
+		log.Printf("organizations/list: %v", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list organizations"})
 		return
 	}
@@ -34,6 +36,7 @@ func (c *Controller) Create(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := c.service.Create(r.Context(), req)
 	if err != nil {
+		log.Printf("organizations/create: %v", err)
 		if errors.Is(err, organizationService.ErrInvalid) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
 			return
@@ -41,6 +44,7 @@ func (c *Controller) Create(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create organization"})
 		return
 	}
+	log.Printf("organizations/create ok id=%s name=%s", resp.Organization.ID, resp.Organization.Name)
 	writeJSON(w, http.StatusCreated, resp)
 }
 

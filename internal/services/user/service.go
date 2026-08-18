@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 
 	"github.com/shivang-16/orbit.api/internal/infra/clerk"
 	authMiddleware "github.com/shivang-16/orbit.api/internal/middleware/auth"
@@ -39,18 +40,19 @@ func (s *Service) Sync(ctx context.Context) (*model.User, bool, error) {
 
 	existing, err := s.users.GetByID(ctx, userID)
 	if err != nil {
-		return nil, false, fmt.Errorf("get user: %w", err)
+		return nil, false, fmt.Errorf("get user %s: %w", userID, err)
 	}
 	if existing != nil {
 		if err := s.ensureDefaultOrg(ctx, existing.ID); err != nil {
-			return nil, false, err
+			return nil, false, fmt.Errorf("ensure default org for %s: %w", userID, err)
 		}
 		return existing, false, nil
 	}
 
+	log.Printf("users/sync: clerk GetProfile user=%s", userID)
 	profile, err := s.clerk.GetProfile(ctx, userID)
 	if err != nil {
-		return nil, false, err
+		return nil, false, fmt.Errorf("clerk GetProfile user=%s: %w", userID, err)
 	}
 
 	created, err := s.createUserWithDefaultOrg(ctx, &model.User{
@@ -60,7 +62,7 @@ func (s *Service) Sync(ctx context.Context) (*model.User, bool, error) {
 		ImageURL: profile.ImageURL,
 	})
 	if err != nil {
-		return nil, false, err
+		return nil, false, fmt.Errorf("create user %s: %w", userID, err)
 	}
 
 	return created, true, nil
@@ -89,6 +91,8 @@ func (s *Service) createUserWithDefaultOrg(ctx context.Context, user *model.User
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("commit: %w", err)
 	}
+
+	log.Printf("users/sync: granted signup credits user=%s org=%s amount_micros=%d", created.ID, org.ID, signupCreditsMicros)
 
 	return created, nil
 }

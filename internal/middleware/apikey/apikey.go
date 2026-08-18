@@ -6,6 +6,7 @@ package apikey
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"strings"
 
@@ -38,10 +39,12 @@ func (m *Middleware) Authenticate(next http.Handler) http.Handler {
 
 		item, err := m.keys.GetActiveByHash(r.Context(), apikeyService.HashSecret(secret))
 		if err != nil {
+			log.Printf("apikey: lookup failed: %v", err)
 			writeError(w, http.StatusInternalServerError, "failed to validate api key")
 			return
 		}
 		if item == nil {
+			log.Printf("apikey: invalid or expired key path=%s", r.URL.Path)
 			writeError(w, http.StatusUnauthorized, "invalid or expired api key")
 			return
 		}

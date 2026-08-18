@@ -23,6 +23,7 @@ func NewController(dodoWebhookKey string, dodoService *webhookService.DodoServic
 func (c *Controller) Dodo(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
+		log.Printf("dodo webhook: read body: %v", err)
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
@@ -31,6 +32,7 @@ func (c *Controller) Dodo(w http.ResponseWriter, r *http.Request) {
 	webhookTimestamp := r.Header.Get("Webhook-Timestamp")
 	webhookSignature := r.Header.Get("Webhook-Signature")
 	if webhookID == "" || webhookTimestamp == "" || webhookSignature == "" {
+		log.Printf("dodo webhook: missing signature headers id=%q ts=%q sig=%t", webhookID, webhookTimestamp, webhookSignature != "")
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}

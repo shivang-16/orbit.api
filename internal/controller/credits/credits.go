@@ -3,6 +3,7 @@ package credits
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strings"
 
@@ -20,6 +21,7 @@ func NewController(service *creditsService.Service) *Controller {
 func (c *Controller) GetOrganizationCredits(w http.ResponseWriter, r *http.Request) {
 	resp, err := c.service.GetOrganizationCredits(r.Context(), organizationID(r))
 	if err != nil {
+		log.Printf("credits/get org=%s: %v", organizationID(r), err)
 		writeServiceError(w, err, "failed to load credits")
 		return
 	}
@@ -29,6 +31,7 @@ func (c *Controller) GetOrganizationCredits(w http.ResponseWriter, r *http.Reque
 func (c *Controller) ListOrganizationCreditHistory(w http.ResponseWriter, r *http.Request) {
 	resp, err := c.service.ListOrganizationCreditHistory(r.Context(), organizationID(r))
 	if err != nil {
+		log.Printf("credits/history org=%s: %v", organizationID(r), err)
 		writeServiceError(w, err, "failed to list credit history")
 		return
 	}

@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"strings"
 
@@ -17,12 +18,14 @@ func Clerk(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token := bearerToken(r.Header.Get("Authorization"))
 		if token == "" {
+			log.Printf("auth: missing bearer token path=%s", r.URL.Path)
 			writeUnauthorized(w)
 			return
 		}
 
 		claims, err := jwt.Verify(r.Context(), &jwt.VerifyParams{Token: token})
 		if err != nil {
+			log.Printf("auth: jwt verify failed path=%s: %v", r.URL.Path, err)
 			writeUnauthorized(w)
 			return
 		}

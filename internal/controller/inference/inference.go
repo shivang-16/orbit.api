@@ -3,6 +3,7 @@ package inference
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -26,12 +27,14 @@ func (c *Controller) Chat(w http.ResponseWriter, r *http.Request) {
 
 	var req inferenceService.ChatRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Printf("inference/chat: invalid body model=%s: %v", modelID, err)
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
 
 	result, err := c.service.Chat(r.Context(), modelID, req)
 	if err != nil {
+		log.Printf("inference/chat failed model=%s: %v", modelID, err)
 		switch {
 		case errors.Is(err, inferenceService.ErrInvalid):
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "messages are required"})
@@ -56,11 +59,18 @@ func (c *Controller) Chat(w http.ResponseWriter, r *http.Request) {
 	if result.StatusCode < 200 || result.StatusCode >= 300 {
 		status = "error"
 		errText = truncate(string(result.Body), 500)
+		log.Printf("inference/chat provider error model=%s org=%s status=%d: %s", modelID, orgID, result.StatusCode, errText)
 	}
 
 	if c.billing == nil {
+		log.Printf("inference/chat: billing enqueuer is nil — usage not recorded org=%s model=%s", orgID, modelID)
 		return
 	}
+
+	log.Printf(
+		"inference/chat: enqueue billing org=%s key=%s model=%s in=%d out=%d latency_ms=%d status=%s",
+		orgID, apiKeyID, result.ModelCatalogueID, result.InputTokens, result.OutputTokens, result.LatencyMS, status,
+	)
 
 	c.billing.Enqueue(billingService.Job{
 		IdempotencyKey:   billingService.NewIdempotencyKey(),

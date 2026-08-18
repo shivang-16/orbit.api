@@ -3,6 +3,7 @@ package billing
 import (
 	"context"
 	"fmt"
+	"log"
 
 	billingRepository "github.com/shivang-16/orbit.api/internal/repositories/billing"
 	pricingRepository "github.com/shivang-16/orbit.api/internal/repositories/pricing"
@@ -30,6 +31,8 @@ func (p *Processor) Process(ctx context.Context, job Job) error {
 		}
 		if price != nil {
 			vendorAmount = chargeMicros(job.InputTokens, job.OutputTokens, price.VendorInputPerMillionMicros, price.VendorOutputPerMillionMicros)
+		} else {
+			log.Printf("billing: no pricing row for model=%s org=%s — charging 0", job.ModelCatalogueID, job.OrganizationID)
 		}
 	}
 
@@ -49,6 +52,10 @@ func (p *Processor) Process(ctx context.Context, job Job) error {
 	}); err != nil {
 		return fmt.Errorf("record billing: %w", err)
 	}
+	log.Printf(
+		"billing: recorded org=%s model=%s amount_micros=%d in=%d out=%d status=%s key=%s",
+		job.OrganizationID, job.ModelCatalogueID, vendorAmount, job.InputTokens, job.OutputTokens, job.Status, job.IdempotencyKey,
+	)
 	return nil
 }
 

@@ -2,6 +2,7 @@ package user
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 
 	userService "github.com/shivang-16/orbit.api/internal/services/user"
@@ -18,6 +19,7 @@ func NewController(service *userService.Service) *Controller {
 func (c *Controller) Sync(w http.ResponseWriter, r *http.Request) {
 	user, created, err := c.service.Sync(r.Context())
 	if err != nil {
+		log.Printf("users/sync failed: %v", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to sync user"})
 		return
 	}
@@ -25,6 +27,9 @@ func (c *Controller) Sync(w http.ResponseWriter, r *http.Request) {
 	status := http.StatusOK
 	if created {
 		status = http.StatusCreated
+		log.Printf("users/sync created user=%s email=%s", user.ID, user.Email)
+	} else {
+		log.Printf("users/sync ok user=%s", user.ID)
 	}
 	writeJSON(w, status, user)
 }

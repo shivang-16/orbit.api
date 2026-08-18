@@ -36,8 +36,10 @@ func (p *Publisher) Enqueue(job Job) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := p.sqs.Publish(ctx, string(body)); err != nil {
-		log.Printf("billing: publish sqs: %v", err)
+		log.Printf("billing: publish sqs org=%s model=%s: %v", job.OrganizationID, job.ModelCatalogueID, err)
+		return
 	}
+	log.Printf("billing: published sqs org=%s model=%s key=%s", job.OrganizationID, job.ModelCatalogueID, job.IdempotencyKey)
 }
 
 func DecodeJob(body string) (Job, error) {
