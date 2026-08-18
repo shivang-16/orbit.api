@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/go-chi/chi/v5"
+
 	apikeyService "github.com/shivang-16/orbit.api/internal/services/apikey"
 )
 
@@ -48,6 +50,16 @@ func (c *Controller) Create(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, resp)
 }
 
+func (c *Controller) Delete(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if err := c.service.Delete(r.Context(), id, organizationID(r)); err != nil {
+		log.Printf("api-keys/delete id=%s org=%s: %v", id, organizationID(r), err)
+		writeServiceError(w, err, "failed to delete api key")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func writeServiceError(w http.ResponseWriter, err error, fallback string) {
 	switch {
 	case errors.Is(err, apikeyService.ErrInvalid):
@@ -56,6 +68,8 @@ func writeServiceError(w http.ResponseWriter, err error, fallback string) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "no organization"})
 	case errors.Is(err, apikeyService.ErrForbidden):
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "not a member of this organization"})
+	case errors.Is(err, apikeyService.ErrNotFound):
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "api key not found"})
 	default:
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fallback})
 	}

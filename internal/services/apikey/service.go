@@ -16,6 +16,7 @@ var (
 	ErrInvalid        = errors.New("invalid request")
 	ErrNoOrganization = errors.New("no organization")
 	ErrForbidden      = errors.New("forbidden")
+	ErrNotFound       = errors.New("not found")
 )
 
 type Service struct {
@@ -76,6 +77,27 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (*CreateRespons
 	}
 
 	return &CreateResponse{Key: *item, Secret: secret}, nil
+}
+
+func (s *Service) Delete(ctx context.Context, id, organizationID string) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return ErrNotFound
+	}
+
+	orgID, err := s.orgIDForUser(ctx, organizationID)
+	if err != nil {
+		return err
+	}
+
+	ok, err := s.keys.Deactivate(ctx, id, orgID)
+	if err != nil {
+		return fmt.Errorf("delete api key: %w", err)
+	}
+	if !ok {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (s *Service) orgIDForUser(ctx context.Context, organizationID string) (string, error) {

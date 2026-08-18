@@ -53,6 +53,7 @@ func registerV1(
 			r.Get("/catalogue/{id}", catalogue.Get)
 			r.Get("/api-keys", apiKeys.List)
 			r.Post("/api-keys", apiKeys.Create)
+			r.Delete("/api-keys/{id}", apiKeys.Delete)
 			r.Get("/organizations", orgs.List)
 			r.Post("/organizations", orgs.Create)
 			r.Post("/billing/checkout", checkout.Create)

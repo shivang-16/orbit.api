@@ -44,8 +44,8 @@ func (m *Middleware) Authenticate(next http.Handler) http.Handler {
 			return
 		}
 		if item == nil {
-			log.Printf("apikey: invalid or expired key path=%s", r.URL.Path)
-			writeError(w, http.StatusUnauthorized, "invalid or expired api key")
+			log.Printf("apikey: invalid api key path=%s", r.URL.Path)
+			writeError(w, http.StatusUnauthorized, "invalid api key")
 			return
 		}
 
