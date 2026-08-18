@@ -165,6 +165,11 @@ func (s *Service) Converse(ctx context.Context, modelIdentifier string, req Conv
 	if !req.isValid() {
 		return nil, ErrInvalid
 	}
+	release, err := s.acquireRateLimit(ctx, w)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	if err := s.requireCredits(ctx); err != nil {
 		return nil, err
 	}

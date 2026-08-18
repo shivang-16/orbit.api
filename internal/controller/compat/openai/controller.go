@@ -12,6 +12,7 @@ import (
 	"net/http"
 
 	sharedController "github.com/shivang-16/orbit.api/internal/controller/shared"
+	"github.com/shivang-16/orbit.api/internal/limiter"
 	catalogueRepository "github.com/shivang-16/orbit.api/internal/repositories/catalogue"
 	billingService "github.com/shivang-16/orbit.api/internal/services/billing"
 	openaiCompat "github.com/shivang-16/orbit.api/internal/services/compat/openai"
@@ -102,6 +103,10 @@ func (c *Controller) ListModels(w http.ResponseWriter, r *http.Request) {
 
 func (c *Controller) writeServiceError(w http.ResponseWriter, modelID string, err error) {
 	log.Printf("openai/chat.completions failed model=%s: %v", modelID, err)
+	if limiter.SetHeadersFromError(w, err) {
+		openaiCompat.WriteError(w, http.StatusTooManyRequests, "rate_limit_exceeded", "rate limit exceeded")
+		return
+	}
 	switch {
 	case errors.Is(err, inferenceService.ErrInvalid):
 		openaiCompat.WriteError(w, http.StatusBadRequest, "invalid_request_error", "messages are required")

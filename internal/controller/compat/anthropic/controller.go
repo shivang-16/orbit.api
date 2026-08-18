@@ -12,6 +12,7 @@ import (
 	"net/http"
 
 	sharedController "github.com/shivang-16/orbit.api/internal/controller/shared"
+	"github.com/shivang-16/orbit.api/internal/limiter"
 	billingService "github.com/shivang-16/orbit.api/internal/services/billing"
 	anthropicCompat "github.com/shivang-16/orbit.api/internal/services/compat/anthropic"
 	inferenceService "github.com/shivang-16/orbit.api/internal/services/inference"
@@ -88,6 +89,10 @@ func (c *Controller) formatBufferedResponse(w http.ResponseWriter, requestedMode
 
 func (c *Controller) writeServiceError(w http.ResponseWriter, modelID string, err error) {
 	log.Printf("anthropic/messages failed model=%s: %v", modelID, err)
+	if limiter.SetHeadersFromError(w, err) {
+		anthropicCompat.WriteError(w, http.StatusTooManyRequests, "rate_limit_error", "rate limit exceeded")
+		return
+	}
 	switch {
 	case errors.Is(err, inferenceService.ErrInvalid):
 		anthropicCompat.WriteError(w, http.StatusBadRequest, "invalid_request_error", "messages are required")
@@ -96,7 +101,7 @@ func (c *Controller) writeServiceError(w http.ResponseWriter, modelID string, er
 	case errors.Is(err, inferenceService.ErrUnsupportedProvider):
 		anthropicCompat.WriteError(w, http.StatusBadGateway, "api_error", "model provider not supported yet")
 	case errors.Is(err, inferenceService.ErrLowCredits):
-		anthropicCompat.WriteError(w, http.StatusTooManyRequests, "rate_limit_error", "low on credits")
+		anthropicCompat.WriteError(w, http.StatusPaymentRequired, "billing_error", "low on credits")
 	default:
 		anthropicCompat.WriteError(w, http.StatusBadGateway, "api_error", "failed to reach model provider")
 	}

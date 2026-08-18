@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	sharedController "github.com/shivang-16/orbit.api/internal/controller/shared"
+	"github.com/shivang-16/orbit.api/internal/limiter"
 	apikeyMiddleware "github.com/shivang-16/orbit.api/internal/middleware/apikey"
 	authMiddleware "github.com/shivang-16/orbit.api/internal/middleware/auth"
 	organizationRepository "github.com/shivang-16/orbit.api/internal/repositories/organization"
@@ -41,6 +42,9 @@ func (c *Controller) Chat(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		orgID, _ := apikeyMiddleware.OrganizationID(r.Context())
 		log.Printf("inference/chat failed model=%s org=%s: %v", modelID, orgID, err)
+		if writeRateLimited(w, err) {
+			return
+		}
 		switch {
 		case errors.Is(err, inferenceService.ErrInvalid):
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "messages are required"})
@@ -101,10 +105,13 @@ func (c *Controller) Playground(w http.ResponseWriter, r *http.Request) {
 	stream := true
 	req.Stream = &stream
 
-	ctx := apikeyMiddleware.WithOrganization(r.Context(), orgID)
+	ctx := limiter.WithPlayground(apikeyMiddleware.WithOrganization(r.Context(), orgID))
 	result, err := c.service.Chat(ctx, modelID, req, w)
 	if err != nil {
 		log.Printf("inference/playground failed model=%s org=%s: %v", modelID, orgID, err)
+		if writeRateLimited(w, err) {
+			return
+		}
 		switch {
 		case errors.Is(err, inferenceService.ErrInvalid):
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "messages are required"})
@@ -170,6 +177,14 @@ func (c *Controller) resolvePlaygroundOrg(r *http.Request) (string, error) {
 		return "", errNoOrganization
 	}
 	return org.ID, nil
+}
+
+func writeRateLimited(w http.ResponseWriter, err error) bool {
+	if !limiter.SetHeadersFromError(w, err) {
+		return false
+	}
+	writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "rate limit exceeded"})
+	return true
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {

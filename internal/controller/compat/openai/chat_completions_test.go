@@ -81,7 +81,7 @@ func newTestHarness(t *testing.T) *testHarness {
 		billingRepository.NewRepository(db.DB()),
 		pricingRepository.NewRepository(db.DB()),
 	)
-	svc := inferenceService.NewService(catalogueRepo, orgRepo, cfg.AWSBedrockAPIKey, cfg.AWSBedrockRegion)
+	svc := inferenceService.NewService(catalogueRepo, orgRepo, cfg)
 	ctrl := openaiController.NewController(svc, catalogueRepo, billingWorker)
 
 	r := chi.NewRouter()

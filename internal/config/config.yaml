@@ -1,0 +1,28 @@
+server:
+  env: local
+  port: "8080"
+  cors_origins:
+    - http://localhost:3000
+  frontend_url: http://localhost:3000
+  dashboard_timeout_seconds: 30
+  inference_timeout_seconds: 300
+
+credits:
+  signup_micros: 2000000
+  low_balance_threshold_micros: 1000000
+
+rate_limits:
+  organization:
+    requests_per_minute: 60
+    burst: 10
+    concurrent: 5
+  playground:
+    requests_per_minute: 20
+    burst: 5
+
+postgres:
+  max_open_conns: 10
+  max_idle_conns: 5
+
+bedrock:
+  region: us-east-1

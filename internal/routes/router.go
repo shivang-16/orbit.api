@@ -61,7 +61,7 @@ func New(
 	r.Get("/ready", health.Ready)
 
 	r.Route("/api/v1", func(r chi.Router) {
-		registerV1(r, health, users, catalogue, apiKeys, orgs, inference, openaiCompat, anthropicCompat, plans, checkout, credits, webhooks, apiKeyAuth)
+		registerV1(r, cfg, health, users, catalogue, apiKeys, orgs, inference, openaiCompat, anthropicCompat, plans, checkout, credits, webhooks, apiKeyAuth)
 	})
 
 	return r

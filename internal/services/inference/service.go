@@ -24,7 +24,10 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/shivang-16/orbit.api/internal/config"
+	"github.com/shivang-16/orbit.api/internal/limiter"
 	apikeyMiddleware "github.com/shivang-16/orbit.api/internal/middleware/apikey"
+	authMiddleware "github.com/shivang-16/orbit.api/internal/middleware/auth"
 	"github.com/shivang-16/orbit.api/internal/model"
 	catalogueRepository "github.com/shivang-16/orbit.api/internal/repositories/catalogue"
 	organizationRepository "github.com/shivang-16/orbit.api/internal/repositories/organization"
@@ -43,45 +46,45 @@ var (
 	ErrLowCredits = errors.New("low on credits")
 )
 
-// lowBalanceThresholdMicros is $1.00 (1_000_000 micros = $1, matching the
-// credits_micros/price_micros convention used across billing). Organizations
-// at or above this remaining balance may proceed, even if the request that
-// follows costs more than what's left — that one request is allowed to take
-// the balance negative, to be settled by the organization's next credit
-// grant/payment.
-const lowBalanceThresholdMicros int64 = 1_000_000
-
-// httpClient is shared across every request so TCP/TLS connections to the
-// provider are pooled and reused instead of re-established per call, which
-// otherwise dominates latency on a hot inference path.
-//
-// Timeout covers the whole request including reading the response body,
-// so for a streamed call it's really "max total stream duration", not a
-// connect timeout. It's set to match the router's per-route timeout for
-// the chat endpoint (see routes/v1.go) so neither one is the surprise
-// bottleneck for a long-running completion.
-var httpClient = &http.Client{
-	Timeout: 5 * time.Minute,
-	Transport: &http.Transport{
-		MaxIdleConns:        100,
-		MaxIdleConnsPerHost: 100,
-		IdleConnTimeout:     90 * time.Second,
-	},
-}
-
 type Service struct {
-	catalogue     *catalogueRepository.Repository
-	orgs          *organizationRepository.Repository
-	bedrockAPIKey string
-	bedrockRegion string
+	catalogue                 *catalogueRepository.Repository
+	orgs                      *organizationRepository.Repository
+	bedrockAPIKey             string
+	bedrockRegion             string
+	lowBalanceThresholdMicros int64
+	httpClient                *http.Client
+	limiter                   limiter.Limiter
 }
 
 func NewService(
 	catalogue *catalogueRepository.Repository,
 	orgs *organizationRepository.Repository,
-	bedrockAPIKey, bedrockRegion string,
+	cfg config.Config,
 ) *Service {
-	return &Service{catalogue: catalogue, orgs: orgs, bedrockAPIKey: bedrockAPIKey, bedrockRegion: bedrockRegion}
+	timeout := time.Duration(cfg.Server.InferenceTimeoutSeconds) * time.Second
+	if timeout < time.Second {
+		timeout = 5 * time.Minute
+	}
+	lowBalance := cfg.Credits.LowBalanceThresholdMicros
+	if lowBalance < 1 {
+		lowBalance = 1_000_000
+	}
+	return &Service{
+		catalogue:                 catalogue,
+		orgs:                      orgs,
+		bedrockAPIKey:             cfg.AWSBedrockAPIKey,
+		bedrockRegion:             cfg.AWSBedrockRegion,
+		lowBalanceThresholdMicros: lowBalance,
+		httpClient: &http.Client{
+			Timeout: timeout,
+			Transport: &http.Transport{
+				MaxIdleConns:        100,
+				MaxIdleConnsPerHost: 100,
+				IdleConnTimeout:     90 * time.Second,
+			},
+		},
+		limiter: limiter.NewMemory(cfg.RateLimits),
+	}
 }
 
 type ChatResult struct {
@@ -108,6 +111,11 @@ func (s *Service) Chat(ctx context.Context, modelID string, req ChatRequest, w h
 	if !req.isValid() {
 		return nil, ErrInvalid
 	}
+	release, err := s.acquireRateLimit(ctx, w)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	if err := s.requireCredits(ctx); err != nil {
 		return nil, err
 	}
@@ -164,7 +172,7 @@ func (s *Service) chatOnce(ctx context.Context, entry *model.ModelCatalogue, pay
 	upstream.Header.Set("Authorization", "Bearer "+s.bedrockAPIKey)
 
 	started := time.Now()
-	resp, err := httpClient.Do(upstream)
+	resp, err := s.httpClient.Do(upstream)
 	if err != nil {
 		return nil, fmt.Errorf("call bedrock: %w", err)
 	}
@@ -217,7 +225,7 @@ func (s *Service) chatStream(ctx context.Context, entry *model.ModelCatalogue, p
 	upstream.Header.Set("Authorization", "Bearer "+s.bedrockAPIKey)
 
 	started := time.Now()
-	resp, err := httpClient.Do(upstream)
+	resp, err := s.httpClient.Do(upstream)
 	if err != nil {
 		return nil, fmt.Errorf("call bedrock: %w", err)
 	}
@@ -321,12 +329,21 @@ func relayBedrockStream(body io.Reader, sink StreamSink) (inputTokens, outputTok
 	}
 }
 
-// requireCredits is the hard pre-flight balance check: any organization
-// below lowBalanceThresholdMicros is rejected before we ever call the model
-// provider, so a $0-balance key can't keep getting billed inference. If the
-// org has at least the threshold, the request is allowed through even
-// though its actual cost may exceed what's left — that overage is expected
-// to be settled by the next credit grant (see ErrLowCredits godoc).
+func (s *Service) acquireRateLimit(ctx context.Context, w http.ResponseWriter) (func(), error) {
+	if s.limiter == nil {
+		return func() {}, nil
+	}
+	orgID, _ := apikeyMiddleware.OrganizationID(ctx)
+	userID, _ := authMiddleware.UserID(ctx)
+	res, err := s.limiter.Allow(orgID, userID, limiter.IsPlayground(ctx))
+	if err != nil {
+		limiter.SetHeadersFromError(w, err)
+		return nil, err
+	}
+	limiter.SetHeaders(w, res.Limit, res.Remaining, res.Reset, 0)
+	return res.Release, nil
+}
+
 func (s *Service) requireCredits(ctx context.Context) error {
 	if s.orgs == nil {
 		return nil
@@ -344,8 +361,8 @@ func (s *Service) requireCredits(ctx context.Context) error {
 		log.Printf("inference: org=%s not found on credit check — blocking", orgID)
 		return ErrLowCredits
 	}
-	if remaining < lowBalanceThresholdMicros {
-		log.Printf("inference: org=%s blocked, remaining_micros=%d below threshold=%d", orgID, remaining, lowBalanceThresholdMicros)
+	if remaining < s.lowBalanceThresholdMicros {
+		log.Printf("inference: org=%s blocked, remaining_micros=%d below threshold=%d", orgID, remaining, s.lowBalanceThresholdMicros)
 		return ErrLowCredits
 	}
 	return nil

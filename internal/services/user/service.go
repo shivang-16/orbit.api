@@ -14,13 +14,12 @@ import (
 	userRepository "github.com/shivang-16/orbit.api/internal/repositories/user"
 )
 
-const signupCreditsMicros int64 = 2_000_000
-
 type Service struct {
-	db    *sql.DB
-	users *userRepository.Repository
-	orgs  *organizationRepository.Repository
-	clerk *clerk.Client
+	db            *sql.DB
+	users         *userRepository.Repository
+	orgs          *organizationRepository.Repository
+	clerk         *clerk.Client
+	signupCredits int64
 }
 
 func NewService(
@@ -28,8 +27,9 @@ func NewService(
 	users *userRepository.Repository,
 	orgs *organizationRepository.Repository,
 	clerkClient *clerk.Client,
+	signupCredits int64,
 ) *Service {
-	return &Service{db: db, users: users, orgs: orgs, clerk: clerkClient}
+	return &Service{db: db, users: users, orgs: orgs, clerk: clerkClient, signupCredits: signupCredits}
 }
 
 func (s *Service) Sync(ctx context.Context) (*model.User, bool, error) {
@@ -84,7 +84,7 @@ func (s *Service) createUserWithDefaultOrg(ctx context.Context, user *model.User
 	if err != nil {
 		return nil, fmt.Errorf("create default organization: %w", err)
 	}
-	if err := grantSignupCredits(ctx, tx, created.ID, org.ID); err != nil {
+	if err := grantSignupCredits(ctx, tx, created.ID, org.ID, s.signupCredits); err != nil {
 		return nil, err
 	}
 
@@ -92,7 +92,7 @@ func (s *Service) createUserWithDefaultOrg(ctx context.Context, user *model.User
 		return nil, fmt.Errorf("commit: %w", err)
 	}
 
-	log.Printf("users/sync: granted signup credits user=%s org=%s amount_micros=%d", created.ID, org.ID, signupCreditsMicros)
+	log.Printf("users/sync: granted signup credits user=%s org=%s amount_micros=%d", created.ID, org.ID, s.signupCredits)
 
 	return created, nil
 }
@@ -125,7 +125,7 @@ func (s *Service) ensureDefaultOrg(ctx context.Context, userID string) error {
 	if err != nil {
 		return fmt.Errorf("create default organization: %w", err)
 	}
-	if err := grantSignupCredits(ctx, tx, userID, org.ID); err != nil {
+	if err := grantSignupCredits(ctx, tx, userID, org.ID, s.signupCredits); err != nil {
 		return err
 	}
 
@@ -135,10 +135,10 @@ func (s *Service) ensureDefaultOrg(ctx context.Context, userID string) error {
 	return nil
 }
 
-func grantSignupCredits(ctx context.Context, tx *sql.Tx, userID, organizationID string) error {
+func grantSignupCredits(ctx context.Context, tx *sql.Tx, userID, organizationID string, amountMicros int64) error {
 	if err := billingRepository.GrantOn(ctx, tx, billingRepository.GrantParams{
 		OrganizationID: organizationID,
-		AmountMicros:   signupCreditsMicros,
+		AmountMicros:   amountMicros,
 		IdempotencyKey: "signup-credits:" + userID,
 		Note:           "Welcome credits",
 	}); err != nil {

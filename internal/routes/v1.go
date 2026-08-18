@@ -6,6 +6,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"github.com/shivang-16/orbit.api/internal/config"
 	apikeyController "github.com/shivang-16/orbit.api/internal/controller/apikey"
 	catalogueController "github.com/shivang-16/orbit.api/internal/controller/catalogue"
 	checkoutController "github.com/shivang-16/orbit.api/internal/controller/checkout"
@@ -24,6 +25,7 @@ import (
 
 func registerV1(
 	r chi.Router,
+	cfg config.Config,
 	health *healthController.Controller,
 	users *userController.Controller,
 	catalogue *catalogueController.Controller,
@@ -42,7 +44,7 @@ func registerV1(
 	// route below is deliberately excluded and gets its own, much longer
 	// one, since a streamed completion can legitimately take minutes.
 	r.Group(func(r chi.Router) {
-		r.Use(middleware.Timeout(30 * time.Second))
+		r.Use(middleware.Timeout(time.Duration(cfg.Server.DashboardTimeoutSeconds) * time.Second))
 
 		r.Get("/health", health.Check)
 		r.Get("/ready", health.Ready)
@@ -72,7 +74,7 @@ func registerV1(
 	// so a streamed completion is not cut off by the 30s dashboard budget.
 	r.Group(func(r chi.Router) {
 		r.Use(authMiddleware.Clerk)
-		r.Use(middleware.Timeout(5 * time.Minute))
+		r.Use(middleware.Timeout(time.Duration(cfg.Server.InferenceTimeoutSeconds) * time.Second))
 		r.Post("/playground/models/{id}/chat", inference.Playground)
 	})
 
@@ -83,7 +85,7 @@ func registerV1(
 	// exactly like a direct Orbit call — only base_url and api_key change.
 	r.Group(func(r chi.Router) {
 		r.Use(apiKeyAuth.Authenticate)
-		r.Use(middleware.Timeout(5 * time.Minute))
+		r.Use(middleware.Timeout(time.Duration(cfg.Server.InferenceTimeoutSeconds) * time.Second))
 		r.Post("/models/{id}/chat", inference.Chat)
 
 		// OpenAI SDK: base_url = ".../api/v1" (its client appends

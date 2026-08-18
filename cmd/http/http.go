@@ -64,7 +64,7 @@ func Start(_ context.Context, cfg config.Config) {
 	clerkClient := clerk.New(cfg.ClerkSecretKey)
 	userRepo := userRepository.NewRepository(db.DB())
 	orgRepo := organizationRepository.NewRepository(db.DB())
-	userSvc := userService.NewService(db.DB(), userRepo, orgRepo, clerkClient)
+	userSvc := userService.NewService(db.DB(), userRepo, orgRepo, clerkClient, cfg.Credits.SignupMicros)
 	userCtrl := userController.NewController(userSvc)
 
 	catalogueRepo := catalogueRepository.NewRepository(db.DB())
@@ -79,7 +79,7 @@ func Start(_ context.Context, cfg config.Config) {
 	orgSvc := organizationService.NewService(orgRepo)
 	orgCtrl := organizationController.NewController(orgSvc)
 
-	inferenceSvc := inferenceService.NewService(catalogueRepo, orgRepo, cfg.AWSBedrockAPIKey, cfg.AWSBedrockRegion)
+	inferenceSvc := inferenceService.NewService(catalogueRepo, orgRepo, cfg)
 	inferenceCtrl := inferenceController.NewController(inferenceSvc, billingPublisher, orgRepo)
 	openaiCompatCtrl := openaiController.NewController(inferenceSvc, catalogueRepo, billingPublisher)
 	anthropicCompatCtrl := anthropicController.NewController(inferenceSvc, billingPublisher)
