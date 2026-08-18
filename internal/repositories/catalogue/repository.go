@@ -23,10 +23,12 @@ func NewRepository(db dbTX) *Repository {
 	return &Repository{db: db}
 }
 
+const catalogueColumns = `id, name, slug, vendor, provider, model_id, input_context_limit,
+		       sort_order, tags, modalities, is_active, created_at, updated_at`
+
 func (r *Repository) ListActive(ctx context.Context, tag string) ([]model.ModelCatalogue, error) {
 	query := `
-		SELECT id, name, vendor, provider, model_id, input_context_limit,
-		       sort_order, tags, modalities, is_active, created_at, updated_at
+		SELECT ` + catalogueColumns + `
 		FROM model_catalogue
 		WHERE is_active = true
 	`
@@ -45,24 +47,11 @@ func (r *Repository) ListActive(ctx context.Context, tag string) ([]model.ModelC
 
 	models := make([]model.ModelCatalogue, 0)
 	for rows.Next() {
-		var item model.ModelCatalogue
-		if err := rows.Scan(
-			&item.ID,
-			&item.Name,
-			&item.Vendor,
-			&item.Provider,
-			&item.ModelID,
-			&item.InputContextLimit,
-			&item.SortOrder,
-			&item.Tags,
-			&item.Modalities,
-			&item.IsActive,
-			&item.CreatedAt,
-			&item.UpdatedAt,
-		); err != nil {
+		item, err := scanCatalogue(rows.Scan)
+		if err != nil {
 			return nil, err
 		}
-		models = append(models, item)
+		models = append(models, *item)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -71,17 +60,49 @@ func (r *Repository) ListActive(ctx context.Context, tag string) ([]model.ModelC
 }
 
 func (r *Repository) GetByID(ctx context.Context, id string) (*model.ModelCatalogue, error) {
-	var item model.ModelCatalogue
-	err := r.db.QueryRowContext(
+	item, err := scanCatalogue(r.db.QueryRowContext(
 		ctx,
-		`SELECT id, name, vendor, provider, model_id, input_context_limit,
-		        sort_order, tags, modalities, is_active, created_at, updated_at
+		`SELECT `+catalogueColumns+`
 		 FROM model_catalogue
 		 WHERE id = $1 AND is_active = true`,
 		id,
-	).Scan(
+	).Scan)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return item, nil
+}
+
+// GetByIdentifier resolves a model by either its public slug (the identifier
+// OpenAI/Anthropic-compatible callers pass as "model") or its catalogue
+// UUID (used by the native /models/{id}/chat route). Comparing id as text
+// avoids a Postgres error when identifier isn't a valid UUID.
+func (r *Repository) GetByIdentifier(ctx context.Context, identifier string) (*model.ModelCatalogue, error) {
+	item, err := scanCatalogue(r.db.QueryRowContext(
+		ctx,
+		`SELECT `+catalogueColumns+`
+		 FROM model_catalogue
+		 WHERE is_active = true AND (slug = $1 OR id::text = $1)`,
+		identifier,
+	).Scan)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return item, nil
+}
+
+func scanCatalogue(scan func(dest ...any) error) (*model.ModelCatalogue, error) {
+	item := model.ModelCatalogue{}
+	if err := scan(
 		&item.ID,
 		&item.Name,
+		&item.Slug,
 		&item.Vendor,
 		&item.Provider,
 		&item.ModelID,
@@ -92,11 +113,7 @@ func (r *Repository) GetByID(ctx context.Context, id string) (*model.ModelCatalo
 		&item.IsActive,
 		&item.CreatedAt,
 		&item.UpdatedAt,
-	)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
+	); err != nil {
 		return nil, err
 	}
 	return &item, nil

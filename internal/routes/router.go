@@ -11,6 +11,8 @@ import (
 	apikeyController "github.com/shivang-16/orbit.api/internal/controller/apikey"
 	catalogueController "github.com/shivang-16/orbit.api/internal/controller/catalogue"
 	checkoutController "github.com/shivang-16/orbit.api/internal/controller/checkout"
+	anthropicController "github.com/shivang-16/orbit.api/internal/controller/compat/anthropic"
+	openaiController "github.com/shivang-16/orbit.api/internal/controller/compat/openai"
 	creditsController "github.com/shivang-16/orbit.api/internal/controller/credits"
 	healthController "github.com/shivang-16/orbit.api/internal/controller/health"
 	inferenceController "github.com/shivang-16/orbit.api/internal/controller/inference"
@@ -29,6 +31,8 @@ func New(
 	apiKeys *apikeyController.Controller,
 	orgs *organizationController.Controller,
 	inference *inferenceController.Controller,
+	openaiCompat *openaiController.Controller,
+	anthropicCompat *anthropicController.Controller,
 	plans *planController.Controller,
 	checkout *checkoutController.Controller,
 	credits *creditsController.Controller,
@@ -47,7 +51,7 @@ func New(
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   cfg.CORSOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Request-ID", "X-Organization-Id"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Request-ID", "X-Organization-Id", "X-Api-Key", "Anthropic-Version", "Anthropic-Beta"},
 		ExposedHeaders:   []string{"Link"},
 		AllowCredentials: true,
 		MaxAge:           300,
@@ -57,7 +61,7 @@ func New(
 	r.Get("/ready", health.Ready)
 
 	r.Route("/api/v1", func(r chi.Router) {
-		registerV1(r, health, users, catalogue, apiKeys, orgs, inference, plans, checkout, credits, webhooks, apiKeyAuth)
+		registerV1(r, health, users, catalogue, apiKeys, orgs, inference, openaiCompat, anthropicCompat, plans, checkout, credits, webhooks, apiKeyAuth)
 	})
 
 	return r

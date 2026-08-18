@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	sharedController "github.com/shivang-16/orbit.api/internal/controller/shared"
 	apikeyMiddleware "github.com/shivang-16/orbit.api/internal/middleware/apikey"
 	billingService "github.com/shivang-16/orbit.api/internal/services/billing"
 	inferenceService "github.com/shivang-16/orbit.api/internal/services/inference"
@@ -60,49 +61,11 @@ func (c *Controller) Chat(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(result.Body)
 	}
 
-	orgID, _ := apikeyMiddleware.OrganizationID(r.Context())
-	apiKeyID, _ := apikeyMiddleware.APIKeyID(r.Context())
-	status := "success"
-	errText := ""
-	if result.StatusCode < 200 || result.StatusCode >= 300 {
-		status = "error"
-		if result.Streamed {
-			errText = "stream interrupted"
-		} else {
-			errText = truncate(string(result.Body), 500)
-		}
-		log.Printf("inference/chat provider error model=%s org=%s status=%d streamed=%t: %s", modelID, orgID, result.StatusCode, result.Streamed, errText)
+	errBody := string(result.Body)
+	if result.Streamed {
+		errBody = "stream interrupted"
 	}
-
-	if c.billing == nil {
-		log.Printf("inference/chat: billing enqueuer is nil — usage not recorded org=%s model=%s", orgID, modelID)
-		return
-	}
-
-	log.Printf(
-		"inference/chat: enqueue billing org=%s key=%s model=%s in=%d out=%d latency_ms=%d status=%s",
-		orgID, apiKeyID, result.ModelCatalogueID, result.InputTokens, result.OutputTokens, result.LatencyMS, status,
-	)
-
-	c.billing.Enqueue(billingService.Job{
-		IdempotencyKey:   billingService.NewIdempotencyKey(),
-		OrganizationID:   orgID,
-		APIKeyID:         apiKeyID,
-		ModelCatalogueID: result.ModelCatalogueID,
-		Prompt:           req.Prompt(),
-		InputTokens:      result.InputTokens,
-		OutputTokens:     result.OutputTokens,
-		LatencyMS:        result.LatencyMS,
-		Status:           status,
-		Error:            errText,
-	})
-}
-
-func truncate(value string, max int) string {
-	if len(value) <= max {
-		return value
-	}
-	return value[:max]
+	sharedController.RecordUsage(r.Context(), c.billing, "inference/chat", result, req.Prompt(), errBody)
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {

@@ -7,7 +7,51 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
+	"net/http"
 )
+
+// StreamSink turns a decoded Bedrock ConverseStream frame into whatever
+// wire dialect a caller wants. relayBedrockStream owns the low-level AWS
+// event-stream frame decoding (CRC, headers) and calls HandleFrame once
+// per frame, in order; the sink owns encoding and writing it out. This is
+// what lets the native route, the OpenAI-compat route, and the
+// Anthropic-compat route all share one Bedrock streaming call path while
+// producing three different SSE shapes.
+type StreamSink interface {
+	// HandleFrame is called once per decoded Bedrock ConverseStream event,
+	// in order. eventType is Bedrock's own event name (messageStart,
+	// contentBlockStart, contentBlockDelta, contentBlockStop, messageStop,
+	// metadata) or "error" for a mid-stream exception frame. payload is
+	// that event's raw JSON body, unwrapped (e.g. for "metadata":
+	// {"usage": {...}, "metrics": {...}}).
+	HandleFrame(eventType string, payload []byte) error
+	// Close is called exactly once after the stream ends, whether cleanly
+	// or due to streamErr, so the sink can emit any trailing terminator
+	// (e.g. OpenAI's "data: [DONE]" or Anthropic's final message_stop if
+	// it wasn't already sent).
+	Close(streamErr bool) error
+}
+
+// passthroughSink is the native route's sink: byte-for-byte identical to
+// the pre-refactor behavior of relaying every Bedrock frame straight
+// through as "event: <type>\ndata: <payload>\n\n", so existing native
+// docs/tests keep working unchanged.
+type passthroughSink struct {
+	w       io.Writer
+	flusher http.Flusher
+}
+
+func (s *passthroughSink) HandleFrame(eventType string, payload []byte) error {
+	if _, err := fmt.Fprintf(s.w, "event: %s\ndata: %s\n\n", eventType, payload); err != nil {
+		return err
+	}
+	if s.flusher != nil {
+		s.flusher.Flush()
+	}
+	return nil
+}
+
+func (s *passthroughSink) Close(streamErr bool) error { return nil }
 
 // Bedrock's ConverseStream operation does not return plain-text
 // Server-Sent-Events over HTTP: it returns AWS's binary "vnd.amazon.event-

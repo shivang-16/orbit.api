@@ -11,17 +11,15 @@ type ChatRequest struct {
 	Messages    []ChatMessage `json:"messages"`
 	MaxTokens   int           `json:"max_tokens,omitempty"`
 	Temperature float64       `json:"temperature,omitempty"`
-	// Stream defaults to true (streamed response) when omitted. Pass
-	// "stream": false explicitly to get a single buffered JSON response
-	// instead. A *bool (rather than bool) is required to tell "omitted"
-	// apart from "explicitly false".
+	// Stream defaults to false (one buffered JSON response). Pass
+	// "stream": true to receive tokens as server-sent events instead.
 	Stream *bool `json:"stream,omitempty"`
 }
 
-// WantsStream reports whether the caller wants a streamed (SSE) response.
-// Streaming is the default; only an explicit "stream": false opts out.
+// WantsStream reports whether the caller asked for a streamed (SSE)
+// response. Omitted or false both mean buffered JSON.
 func (r ChatRequest) WantsStream() bool {
-	return r.Stream == nil || *r.Stream
+	return r.Stream != nil && *r.Stream
 }
 
 func (r ChatRequest) Prompt() string {

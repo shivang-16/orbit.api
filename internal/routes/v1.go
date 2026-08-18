@@ -9,6 +9,8 @@ import (
 	apikeyController "github.com/shivang-16/orbit.api/internal/controller/apikey"
 	catalogueController "github.com/shivang-16/orbit.api/internal/controller/catalogue"
 	checkoutController "github.com/shivang-16/orbit.api/internal/controller/checkout"
+	anthropicController "github.com/shivang-16/orbit.api/internal/controller/compat/anthropic"
+	openaiController "github.com/shivang-16/orbit.api/internal/controller/compat/openai"
 	creditsController "github.com/shivang-16/orbit.api/internal/controller/credits"
 	healthController "github.com/shivang-16/orbit.api/internal/controller/health"
 	inferenceController "github.com/shivang-16/orbit.api/internal/controller/inference"
@@ -28,6 +30,8 @@ func registerV1(
 	apiKeys *apikeyController.Controller,
 	orgs *organizationController.Controller,
 	inference *inferenceController.Controller,
+	openaiCompat *openaiController.Controller,
+	anthropicCompat *anthropicController.Controller,
 	plans *planController.Controller,
 	checkout *checkoutController.Controller,
 	credits *creditsController.Controller,
@@ -65,9 +69,22 @@ func registerV1(
 
 	// Authenticated with an Orbit API key (sk-orbit-...) instead of a Clerk
 	// session, since this is the surface external callers hit directly.
+	// This same group carries the native chat route plus the
+	// OpenAI/Anthropic-compatible routes, so official SDKs authenticate
+	// exactly like a direct Orbit call — only base_url and api_key change.
 	r.Group(func(r chi.Router) {
 		r.Use(apiKeyAuth.Authenticate)
 		r.Use(middleware.Timeout(5 * time.Minute))
 		r.Post("/models/{id}/chat", inference.Chat)
+
+		// OpenAI SDK: base_url = ".../api/v1" (its client appends
+		// "/chat/completions" and "/models" itself).
+		r.Post("/chat/completions", openaiCompat.ChatCompletions)
+		r.Get("/models", openaiCompat.ListModels)
+
+		// Anthropic SDK: base_url = ".../api" (its client appends
+		// "/v1/messages" itself), so this still lives under the
+		// existing "/api/v1" mount.
+		r.Post("/messages", anthropicCompat.Messages)
 	})
 }

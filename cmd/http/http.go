@@ -9,6 +9,8 @@ import (
 	apikeyController "github.com/shivang-16/orbit.api/internal/controller/apikey"
 	catalogueController "github.com/shivang-16/orbit.api/internal/controller/catalogue"
 	checkoutController "github.com/shivang-16/orbit.api/internal/controller/checkout"
+	anthropicController "github.com/shivang-16/orbit.api/internal/controller/compat/anthropic"
+	openaiController "github.com/shivang-16/orbit.api/internal/controller/compat/openai"
 	creditsController "github.com/shivang-16/orbit.api/internal/controller/credits"
 	healthController "github.com/shivang-16/orbit.api/internal/controller/health"
 	inferenceController "github.com/shivang-16/orbit.api/internal/controller/inference"
@@ -79,6 +81,8 @@ func Start(_ context.Context, cfg config.Config) {
 
 	inferenceSvc := inferenceService.NewService(catalogueRepo, orgRepo, cfg.AWSBedrockAPIKey, cfg.AWSBedrockRegion)
 	inferenceCtrl := inferenceController.NewController(inferenceSvc, billingPublisher)
+	openaiCompatCtrl := openaiController.NewController(inferenceSvc, catalogueRepo, billingPublisher)
+	anthropicCompatCtrl := anthropicController.NewController(inferenceSvc, billingPublisher)
 	apiKeyAuth := apikeyMiddleware.New(apiKeyRepo)
 
 	planRepo := planRepository.NewRepository(db.DB())
@@ -98,7 +102,7 @@ func Start(_ context.Context, cfg config.Config) {
 
 	healthSvc := healthService.NewService(db)
 	healthCtrl := healthController.NewController(healthSvc)
-	handler := routes.New(cfg, healthCtrl, userCtrl, catalogueCtrl, apiKeyCtrl, orgCtrl, inferenceCtrl, planCtrl, checkoutCtrl, creditsCtrl, webhookCtrl, apiKeyAuth)
+	handler := routes.New(cfg, healthCtrl, userCtrl, catalogueCtrl, apiKeyCtrl, orgCtrl, inferenceCtrl, openaiCompatCtrl, anthropicCompatCtrl, planCtrl, checkoutCtrl, creditsCtrl, webhookCtrl, apiKeyAuth)
 
 	addr := ":" + cfg.Port
 	log.Printf("orbit.api http listening on %s (%s)", addr, cfg.Env)

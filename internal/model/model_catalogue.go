@@ -9,6 +9,7 @@ import (
 type ModelCatalogue struct {
 	ID                string         `json:"id" db:"id"`
 	Name              string         `json:"name" db:"name"`
+	Slug              string         `json:"slug" db:"slug"`
 	Vendor            string         `json:"vendor" db:"vendor"`
 	Provider          string         `json:"provider" db:"provider"`
 	ModelID           string         `json:"model_id" db:"model_id"`

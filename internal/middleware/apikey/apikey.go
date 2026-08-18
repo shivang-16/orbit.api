@@ -31,7 +31,7 @@ func New(keys *apikeyRepository.Repository) *Middleware {
 
 func (m *Middleware) Authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		secret := bearerToken(r.Header.Get("Authorization"))
+		secret := credential(r)
 		if secret == "" {
 			writeError(w, http.StatusUnauthorized, "missing api key")
 			return
@@ -69,6 +69,17 @@ func OrganizationID(ctx context.Context) (string, bool) {
 func APIKeyID(ctx context.Context) (string, bool) {
 	id, ok := ctx.Value(apiKeyIDKey).(string)
 	return id, ok && id != ""
+}
+
+// credential extracts the Orbit API key from a request, accepting both
+// "Authorization: Bearer sk-orbit-..." (the OpenAI SDK and Orbit's own
+// convention) and "x-api-key: sk-orbit-..." (the Anthropic SDK's default),
+// so either SDK authenticates without extra configuration.
+func credential(r *http.Request) string {
+	if token := bearerToken(r.Header.Get("Authorization")); token != "" {
+		return token
+	}
+	return strings.TrimSpace(r.Header.Get("X-Api-Key"))
 }
 
 func bearerToken(header string) string {

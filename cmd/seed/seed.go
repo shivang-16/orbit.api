@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"log"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/lib/pq"
@@ -305,8 +307,8 @@ func main() {
 	}
 
 	const sql = `
-		INSERT INTO model_catalogue (name, vendor, provider, model_id, input_context_limit, sort_order, tags, modalities, is_active)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		INSERT INTO model_catalogue (name, slug, vendor, provider, model_id, input_context_limit, sort_order, tags, modalities, is_active)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		RETURNING id, name, vendor, sort_order
 	`
 
@@ -317,6 +319,7 @@ func main() {
 			ctx,
 			sql,
 			model.Name,
+			slugify(model.Name),
 			model.Vendor,
 			model.Provider,
 			model.ModelID,
@@ -355,4 +358,18 @@ func main() {
 			float64(price.VendorOutputPerMillionMicros)/1_000_000,
 		)
 	}
+}
+
+var (
+	slugNonAlnumRun = regexp.MustCompile(`[^a-z0-9]+`)
+	slugTrimDashes  = regexp.MustCompile(`(^-+)|(-+$)`)
+)
+
+// slugify mirrors orbit.web's lib/slug.ts and the SQL backfill in
+// migrations/0018_model_catalogue_slug.up.sql, so every insertion path
+// produces the same slug for a given name.
+func slugify(name string) string {
+	lower := strings.ToLower(strings.TrimSpace(name))
+	dashed := slugNonAlnumRun.ReplaceAllString(lower, "-")
+	return slugTrimDashes.ReplaceAllString(dashed, "")
 }

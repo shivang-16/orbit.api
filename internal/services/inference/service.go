@@ -7,9 +7,8 @@
 // Converse (POST .../converse) returns one buffered JSON response,
 // ConverseStream (POST .../converse-stream) returns the same content as an
 // ordered Server-Sent-Events stream (messageStart/contentBlockDelta/...
-// /metadata frames). We default every request to streaming and relay
-// Bedrock's SSE frames to the caller unchanged; callers that want the old
-// buffered behavior pass "stream": false.
+// /metadata frames). Requests are buffered JSON unless the caller passes
+// "stream": true, in which case we relay Bedrock's SSE frames unchanged.
 package inference
 
 import (
@@ -93,39 +92,48 @@ type ChatResult struct {
 	// controller must not write Body/StatusCode again in that case.
 	Streamed         bool
 	ModelCatalogueID string
-	InputTokens      int
-	OutputTokens     int
-	LatencyMS        int
+	// ModelSlug is the resolved catalogue entry's public slug, used by the
+	// OpenAI/Anthropic compat responses to echo back a "model" value the
+	// caller recognizes (as opposed to the internal catalogue UUID).
+	ModelSlug    string
+	InputTokens  int
+	OutputTokens int
+	LatencyMS    int
 }
 
 // Chat validates the request, enforces the credit gate, resolves the
-// model, and then dispatches to Bedrock either streamed (default) or
-// buffered ("stream": false). w is only written to in the streaming case.
+// model, and then dispatches to Bedrock either buffered (default) or
+// streamed ("stream": true). w is only written to in the streaming case.
 func (s *Service) Chat(ctx context.Context, modelID string, req ChatRequest, w http.ResponseWriter) (*ChatResult, error) {
-	entry, err := s.prepare(ctx, modelID, req)
+	if !req.isValid() {
+		return nil, ErrInvalid
+	}
+	if err := s.requireCredits(ctx); err != nil {
+		return nil, err
+	}
+	entry, err := s.resolveModel(ctx, modelID)
 	if err != nil {
 		return nil, err
 	}
 
-	if req.WantsStream() {
-		return s.chatStream(ctx, entry, req, w)
+	payload, err := bedrockConverseBody(req)
+	if err != nil {
+		return nil, fmt.Errorf("encode request: %w", err)
 	}
-	return s.chatOnce(ctx, entry, req)
+
+	if req.WantsStream() {
+		flusher, _ := w.(http.Flusher)
+		return s.chatStream(ctx, entry, payload, &passthroughSink{w: w, flusher: flusher}, w)
+	}
+	return s.chatOnce(ctx, entry, payload)
 }
 
-// prepare runs every check that must happen before we ever talk to
-// Bedrock, shared by both the buffered and streamed paths: request shape,
-// the hard credit gate, and model/provider resolution.
-func (s *Service) prepare(ctx context.Context, modelID string, req ChatRequest) (*model.ModelCatalogue, error) {
-	if !req.isValid() {
-		return nil, ErrInvalid
-	}
-
-	if err := s.requireCredits(ctx); err != nil {
-		return nil, err
-	}
-
-	entry, err := s.catalogue.GetByID(ctx, modelID)
+// resolveModel looks up a model by its public identifier (slug or
+// catalogue UUID — see catalogueRepository.GetByIdentifier) and confirms
+// it's servable, shared by the native Chat path and the OpenAI/Anthropic
+// compat Converse path.
+func (s *Service) resolveModel(ctx context.Context, modelIdentifier string) (*model.ModelCatalogue, error) {
+	entry, err := s.catalogue.GetByIdentifier(ctx, modelIdentifier)
 	if err != nil {
 		return nil, fmt.Errorf("lookup model: %w", err)
 	}
@@ -139,13 +147,10 @@ func (s *Service) prepare(ctx context.Context, modelID string, req ChatRequest) 
 }
 
 // chatOnce is the original buffered Converse call: one request, one
-// response body, used when the caller passes "stream": false.
-func (s *Service) chatOnce(ctx context.Context, entry *model.ModelCatalogue, req ChatRequest) (*ChatResult, error) {
-	payload, err := bedrockConverseBody(req)
-	if err != nil {
-		return nil, fmt.Errorf("encode request: %w", err)
-	}
-
+// response body, used when the caller passes "stream": false. payload is
+// an already-encoded Bedrock Converse request body, shared with the
+// OpenAI/Anthropic compat Converse path.
+func (s *Service) chatOnce(ctx context.Context, entry *model.ModelCatalogue, payload []byte) (*ChatResult, error) {
 	endpoint := fmt.Sprintf(
 		"https://bedrock-runtime.%s.amazonaws.com/model/%s/converse",
 		s.bedrockRegion,
@@ -179,6 +184,7 @@ func (s *Service) chatOnce(ctx context.Context, entry *model.ModelCatalogue, req
 		StatusCode:       resp.StatusCode,
 		Body:             body,
 		ModelCatalogueID: entry.ID,
+		ModelSlug:        entry.Slug,
 		InputTokens:      inputTokens,
 		OutputTokens:     outputTokens,
 		LatencyMS:        latencyMS,
@@ -189,17 +195,14 @@ func (s *Service) chatOnce(ctx context.Context, entry *model.ModelCatalogue, req
 // the SSE stream once it has accepted the request with a 200; validation
 // errors (bad model, throttling, auth) come back as a normal buffered JSON
 // body on a non-200 status, exactly like Converse, so that case is handled
-// like chatOnce. Once streaming starts we relay every SSE line to w as it
-// arrives and flush immediately, while also parsing the "metadata" frame
-// for token usage (for billing) and watching for mid-stream exception
-// frames (internalServerException, modelStreamErrorException, ...), which
-// Bedrock can send after the 200 has already gone out.
-func (s *Service) chatStream(ctx context.Context, entry *model.ModelCatalogue, req ChatRequest, w http.ResponseWriter) (*ChatResult, error) {
-	payload, err := bedrockConverseBody(req)
-	if err != nil {
-		return nil, fmt.Errorf("encode request: %w", err)
-	}
-
+// like chatOnce. Once streaming starts, every decoded Bedrock frame is
+// handed to sink (see StreamSink), which owns turning it into whatever
+// wire dialect the caller wants (native passthrough, OpenAI, Anthropic),
+// while this method centrally parses the "metadata" frame for token usage
+// (for billing) and watches for mid-stream exception frames
+// (internalServerException, modelStreamErrorException, ...), which Bedrock
+// can send after the 200 has already gone out.
+func (s *Service) chatStream(ctx context.Context, entry *model.ModelCatalogue, payload []byte, sink StreamSink, w http.ResponseWriter) (*ChatResult, error) {
 	endpoint := fmt.Sprintf(
 		"https://bedrock-runtime.%s.amazonaws.com/model/%s/converse-stream",
 		s.bedrockRegion,
@@ -229,6 +232,7 @@ func (s *Service) chatStream(ctx context.Context, entry *model.ModelCatalogue, r
 			StatusCode:       resp.StatusCode,
 			Body:             body,
 			ModelCatalogueID: entry.ID,
+			ModelSlug:        entry.Slug,
 			LatencyMS:        int(time.Since(started).Milliseconds()),
 		}, nil
 	}
@@ -237,9 +241,8 @@ func (s *Service) chatStream(ctx context.Context, entry *model.ModelCatalogue, r
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
-	flusher, _ := w.(http.Flusher)
 
-	inputTokens, outputTokens, latencyMS, streamErr := relayBedrockStream(resp.Body, w, flusher)
+	inputTokens, outputTokens, latencyMS, streamErr := relayBedrockStream(resp.Body, sink)
 	if latencyMS == 0 {
 		latencyMS = int(time.Since(started).Milliseconds())
 	}
@@ -253,6 +256,7 @@ func (s *Service) chatStream(ctx context.Context, entry *model.ModelCatalogue, r
 		StatusCode:       status,
 		Streamed:         true,
 		ModelCatalogueID: entry.ID,
+		ModelSlug:        entry.Slug,
 		InputTokens:      inputTokens,
 		OutputTokens:     outputTokens,
 		LatencyMS:        latencyMS,
@@ -260,24 +264,26 @@ func (s *Service) chatStream(ctx context.Context, entry *model.ModelCatalogue, r
 }
 
 // relayBedrockStream decodes Bedrock's binary AWS event-stream body one
-// frame at a time and re-emits each as a plain-text SSE event to w
-// (event: <bedrock event type>\ndata: <json payload>\n\n), flushing after
-// every frame so the caller sees tokens as they're generated. Bedrock's
-// own wire format is opaque binary framing (see eventstream.go); this is
-// what turns it into something any standard SSE/EventSource client can
-// read directly. The "metadata" event's payload carries final token usage
-// (for billing), and a message-type of "exception" signals a stream
-// failure that Bedrock can raise after the 200 has already gone out.
-func relayBedrockStream(body io.Reader, w io.Writer, flusher http.Flusher) (inputTokens, outputTokens, latencyMS int, streamErr bool) {
+// frame at a time and hands each decoded frame to sink, which owns
+// encoding it into whatever wire dialect the caller wants (see
+// StreamSink). Bedrock's own wire format is opaque binary framing (see
+// eventstream.go); this is what turns it into named (eventType, payload)
+// frames any sink can consume. The "metadata" event's payload carries
+// final token usage (for billing), and a message-type of "exception"
+// signals a stream failure that Bedrock can raise after the 200 has
+// already gone out.
+func relayBedrockStream(body io.Reader, sink StreamSink) (inputTokens, outputTokens, latencyMS int, streamErr bool) {
 	reader := bufio.NewReaderSize(body, 64*1024)
 
 	for {
 		frame, err := readAWSEventStreamFrame(reader)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
+				_ = sink.Close(streamErr)
 				return inputTokens, outputTokens, latencyMS, streamErr
 			}
 			log.Printf("inference: decode bedrock event-stream: %v", err)
+			_ = sink.Close(true)
 			return inputTokens, outputTokens, latencyMS, true
 		}
 
@@ -291,11 +297,9 @@ func relayBedrockStream(body io.Reader, w io.Writer, flusher http.Flusher) (inpu
 			eventType = "message"
 		}
 
-		if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, frame.payload); err != nil {
+		if err := sink.HandleFrame(eventType, frame.payload); err != nil {
+			_ = sink.Close(true)
 			return inputTokens, outputTokens, latencyMS, true
-		}
-		if flusher != nil {
-			flusher.Flush()
 		}
 
 		if eventType == "metadata" {
