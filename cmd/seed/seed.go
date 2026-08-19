@@ -474,7 +474,7 @@ var models = []catalogueModel{
 		Vendor:            "meta",
 		Provider:          "bedrock",
 		ModelID:           "arn:aws:bedrock:us-east-1:471112741644:inference-profile/us.meta.llama4-scout-17b-instruct-v1:0",
-		InputContextLimit: 10_000_000,
+		InputContextLimit: 3_500_000,
 		SortOrder:         2,
 		Tags:              []string{"long-context", "cost-efficient"},
 		Modalities:        []string{"text", "image"},
