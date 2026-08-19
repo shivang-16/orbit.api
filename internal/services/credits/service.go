@@ -85,7 +85,7 @@ func (s *Service) ListOrganizationCreditHistory(ctx context.Context, organizatio
 	return &HistoryResponse{Entries: entries, Total: len(entries)}, nil
 }
 
-func (s *Service) GetUsage(ctx context.Context, organizationID, preset string) (*UsageResponse, error) {
+func (s *Service) GetUsage(ctx context.Context, organizationID, preset, pageRaw, limitRaw string) (*UsageResponse, error) {
 	orgID, err := s.orgIDForUser(ctx, organizationID)
 	if err != nil {
 		return nil, err
@@ -95,12 +95,20 @@ func (s *Service) GetUsage(ctx context.Context, organizationID, preset string) (
 	if err != nil {
 		return nil, err
 	}
+	page, limit, err := parseUsagePage(pageRaw, limitRaw)
+	if err != nil {
+		return nil, err
+	}
 
 	daily, err := s.billing.ListUsageDaily(ctx, orgID, window.From, window.To)
 	if err != nil {
 		return nil, fmt.Errorf("list usage daily: %w", err)
 	}
-	requests, err := s.billing.ListUsageRequests(ctx, orgID, window.From, window.To)
+	total, err := s.billing.CountUsageRequests(ctx, orgID, window.From, window.To)
+	if err != nil {
+		return nil, fmt.Errorf("count usage requests: %w", err)
+	}
+	requests, err := s.billing.ListUsageRequests(ctx, orgID, window.From, window.To, limit, (page-1)*limit)
 	if err != nil {
 		return nil, fmt.Errorf("list usage requests: %w", err)
 	}
@@ -150,15 +158,18 @@ func (s *Service) GetUsage(ctx context.Context, organizationID, preset string) (
 	}
 
 	return &UsageResponse{
-		Range:        window.Preset,
-		From:         window.From,
-		To:           window.To,
-		InputTokens:  inputTotal,
-		OutputTokens: outputTotal,
-		TotalTokens:  inputTotal + outputTotal,
-		CostMicros:   costMicros,
-		Series:       series,
-		Requests:     outRequests,
+		Range:         window.Preset,
+		From:          window.From,
+		To:            window.To,
+		InputTokens:   inputTotal,
+		OutputTokens:  outputTotal,
+		TotalTokens:   inputTotal + outputTotal,
+		CostMicros:    costMicros,
+		Series:        series,
+		Requests:      outRequests,
+		RequestsPage:  page,
+		RequestsLimit: limit,
+		RequestsTotal: total,
 	}, nil
 }
 

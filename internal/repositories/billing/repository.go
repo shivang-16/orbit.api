@@ -353,7 +353,23 @@ func (r *Repository) ListUsageDaily(ctx context.Context, organizationID string, 
 	return out, rows.Err()
 }
 
-func (r *Repository) ListUsageRequests(ctx context.Context, organizationID string, from, to time.Time) ([]UsageRequestRow, error) {
+func (r *Repository) CountUsageRequests(ctx context.Context, organizationID string, from, to time.Time) (int, error) {
+	var total int
+	err := r.db.QueryRowContext(
+		ctx,
+		`SELECT COUNT(*)
+		 FROM inference_requests ir
+		 WHERE ir.organization_id = $1
+		   AND ir.created_at >= $2
+		   AND ir.created_at < $3`,
+		organizationID,
+		from,
+		to,
+	).Scan(&total)
+	return total, err
+}
+
+func (r *Repository) ListUsageRequests(ctx context.Context, organizationID string, from, to time.Time, limit, offset int) ([]UsageRequestRow, error) {
 	rows, err := r.db.QueryContext(
 		ctx,
 		`SELECT ir.id, ir.created_at,
@@ -368,10 +384,12 @@ func (r *Repository) ListUsageRequests(ctx context.Context, organizationID strin
 		   AND ir.created_at >= $2
 		   AND ir.created_at < $3
 		 ORDER BY ir.created_at DESC
-		 LIMIT 200`,
+		 LIMIT $4 OFFSET $5`,
 		organizationID,
 		from,
 		to,
+		limit,
+		offset,
 	)
 	if err != nil {
 		return nil, err

@@ -39,11 +39,16 @@ func (c *Controller) ListOrganizationCreditHistory(w http.ResponseWriter, r *htt
 }
 
 func (c *Controller) GetUsage(w http.ResponseWriter, r *http.Request) {
-	resp, err := c.service.GetUsage(r.Context(), organizationID(r), r.URL.Query().Get("range"))
+	q := r.URL.Query()
+	resp, err := c.service.GetUsage(r.Context(), organizationID(r), q.Get("range"), q.Get("page"), q.Get("limit"))
 	if err != nil {
-		log.Printf("usage/get org=%s range=%s: %v", organizationID(r), r.URL.Query().Get("range"), err)
+		log.Printf("usage/get org=%s range=%s page=%s limit=%s: %v", organizationID(r), q.Get("range"), q.Get("page"), q.Get("limit"), err)
 		if errors.Is(err, creditsService.ErrInvalidRange) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid range"})
+			return
+		}
+		if errors.Is(err, creditsService.ErrInvalidPage) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid page"})
 			return
 		}
 		writeServiceError(w, err, "failed to load usage")

@@ -7,8 +7,12 @@
 // Converse (POST .../converse) returns one buffered JSON response,
 // ConverseStream (POST .../converse-stream) returns the same content as an
 // ordered Server-Sent-Events stream (messageStart/contentBlockDelta/...
-// /metadata frames). Requests are buffered JSON unless the caller passes
-// "stream": true, in which case we relay Bedrock's SSE frames unchanged.
+// /metadata frames). OpenAI GPT-5.x frontier models are the exception:
+// they are served only on Bedrock Mantle's Responses API
+// (POST https://bedrock-mantle.{region}.api.aws/openai/v1/responses) and are
+// translated back into the same Converse shapes so callers and billing
+// do not change. Requests are buffered JSON unless the caller passes
+// "stream": true, in which case we relay frames through StreamSink.
 package inference
 
 import (
@@ -122,6 +126,15 @@ func (s *Service) Chat(ctx context.Context, modelID string, req ChatRequest, w h
 	entry, err := s.resolveModel(ctx, modelID)
 	if err != nil {
 		return nil, err
+	}
+
+	if usesMantleResponses(entry.ModelID) {
+		var sink StreamSink
+		if req.WantsStream() {
+			flusher, _ := w.(http.Flusher)
+			sink = &passthroughSink{w: w, flusher: flusher}
+		}
+		return s.callMantle(ctx, entry, chatRequestToConverse(req), sink, w)
 	}
 
 	payload, err := bedrockConverseBody(req)

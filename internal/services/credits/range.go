@@ -2,11 +2,26 @@ package credits
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
 
-var ErrInvalidRange = fmt.Errorf("invalid range")
+var (
+	ErrInvalidRange = fmt.Errorf("invalid range")
+	ErrInvalidPage  = fmt.Errorf("invalid page")
+)
+
+const (
+	defaultUsagePage  = 1
+	defaultUsageLimit = 25
+)
+
+var allowedUsageLimits = map[int]struct{}{
+	25: {},
+	50: {},
+	75: {},
+}
 
 // UsageRange is a half-open [From, To) window in UTC. To is exclusive
 // and always the first instant after the last included calendar day.
@@ -49,6 +64,30 @@ func parseUsageRange(preset string, now time.Time) (UsageRange, error) {
 	default:
 		return UsageRange{}, ErrInvalidRange
 	}
+}
+
+func parseUsagePage(pageRaw, limitRaw string) (page, limit int, err error) {
+	limit = defaultUsageLimit
+	if strings.TrimSpace(limitRaw) != "" {
+		n, convErr := strconv.Atoi(strings.TrimSpace(limitRaw))
+		if convErr != nil {
+			return 0, 0, ErrInvalidPage
+		}
+		if _, ok := allowedUsageLimits[n]; !ok {
+			return 0, 0, ErrInvalidPage
+		}
+		limit = n
+	}
+
+	page = defaultUsagePage
+	if strings.TrimSpace(pageRaw) != "" {
+		n, convErr := strconv.Atoi(strings.TrimSpace(pageRaw))
+		if convErr != nil || n < 1 {
+			return 0, 0, ErrInvalidPage
+		}
+		page = n
+	}
+	return page, limit, nil
 }
 
 func eachUTCDay(from, to time.Time) []time.Time {

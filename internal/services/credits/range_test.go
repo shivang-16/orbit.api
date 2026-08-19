@@ -39,6 +39,26 @@ func TestParseUsageRange(t *testing.T) {
 	}
 }
 
+func TestParseUsagePage(t *testing.T) {
+	page, limit, err := parseUsagePage("", "")
+	if err != nil || page != 1 || limit != 25 {
+		t.Fatalf("defaults: page=%d limit=%d err=%v", page, limit, err)
+	}
+	page, limit, err = parseUsagePage("3", "50")
+	if err != nil || page != 3 || limit != 50 {
+		t.Fatalf("explicit: page=%d limit=%d err=%v", page, limit, err)
+	}
+	if _, _, err := parseUsagePage("0", "25"); err != ErrInvalidPage {
+		t.Fatalf("page 0: %v", err)
+	}
+	if _, _, err := parseUsagePage("1", "100"); err != ErrInvalidPage {
+		t.Fatalf("limit 100: %v", err)
+	}
+	if _, _, err := parseUsagePage("x", "25"); err != ErrInvalidPage {
+		t.Fatalf("bad page: %v", err)
+	}
+}
+
 func TestEachUTCDay(t *testing.T) {
 	from := time.Date(2026, 8, 16, 0, 0, 0, 0, time.UTC)
 	to := time.Date(2026, 8, 19, 0, 0, 0, 0, time.UTC)

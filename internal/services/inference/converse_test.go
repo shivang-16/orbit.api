@@ -174,6 +174,9 @@ func TestBedrockErrorMessage(t *testing.T) {
 	if got := BedrockErrorMessage([]byte(`{"message":"bad request"}`)); got != "bad request" {
 		t.Fatalf("got %q", got)
 	}
+	if got := BedrockErrorMessage([]byte(`{"error":{"message":"no such model"}}`)); got != "no such model" {
+		t.Fatalf("openai envelope got %q", got)
+	}
 	if got := BedrockErrorMessage([]byte(`not json`)); got != "upstream model provider error" {
 		t.Fatalf("fallback got %q", got)
 	}

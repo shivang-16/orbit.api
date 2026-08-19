@@ -52,13 +52,16 @@ type UsageRequest struct {
 }
 
 type UsageResponse struct {
-	Range        string         `json:"range"`
-	From         time.Time      `json:"from"`
-	To           time.Time      `json:"to"`
-	InputTokens  int64          `json:"input_tokens"`
-	OutputTokens int64          `json:"output_tokens"`
-	TotalTokens  int64          `json:"total_tokens"`
-	CostMicros   int64          `json:"cost_micros"`
-	Series       []UsageDay     `json:"series"`
-	Requests     []UsageRequest `json:"requests"`
+	Range         string         `json:"range"`
+	From          time.Time      `json:"from"`
+	To            time.Time      `json:"to"`
+	InputTokens   int64          `json:"input_tokens"`
+	OutputTokens  int64          `json:"output_tokens"`
+	TotalTokens   int64          `json:"total_tokens"`
+	CostMicros    int64          `json:"cost_micros"`
+	Series        []UsageDay     `json:"series"`
+	Requests      []UsageRequest `json:"requests"`
+	RequestsPage  int            `json:"requests_page"`
+	RequestsLimit int            `json:"requests_limit"`
+	RequestsTotal int            `json:"requests_total"`
 }

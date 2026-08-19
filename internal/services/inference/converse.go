@@ -148,11 +148,20 @@ func ParseConverseResponse(body []byte) (*ConverseResponse, error) {
 func BedrockErrorMessage(body []byte) string {
 	var parsed struct {
 		Message string `json:"message"`
+		Error   *struct {
+			Message string `json:"message"`
+		} `json:"error"`
 	}
-	if err := json.Unmarshal(body, &parsed); err != nil || parsed.Message == "" {
+	if err := json.Unmarshal(body, &parsed); err != nil {
 		return "upstream model provider error"
 	}
-	return parsed.Message
+	if parsed.Message != "" {
+		return parsed.Message
+	}
+	if parsed.Error != nil && parsed.Error.Message != "" {
+		return parsed.Error.Message
+	}
+	return "upstream model provider error"
 }
 
 // Converse is the entry point used by the OpenAI/Anthropic compat
@@ -176,6 +185,10 @@ func (s *Service) Converse(ctx context.Context, modelIdentifier string, req Conv
 	entry, err := s.resolveModel(ctx, modelIdentifier)
 	if err != nil {
 		return nil, err
+	}
+
+	if usesMantleResponses(entry.ModelID) {
+		return s.callMantle(ctx, entry, req, sink, w)
 	}
 
 	payload, err := converseBody(req)
