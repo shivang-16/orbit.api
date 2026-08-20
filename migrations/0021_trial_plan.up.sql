@@ -21,7 +21,7 @@ INSERT INTO plans (
 ) VALUES (
     'trial',
     'Trial',
-    'pdt_test_trial_k4m8Qx2Np7',
+    'pdt_0NlkLEpnqBG9BKAMuRTRi',
     5000000,
     7000000,
     'See if Orbit fits',

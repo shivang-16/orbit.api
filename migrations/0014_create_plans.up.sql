@@ -27,10 +27,10 @@ EXECUTE FUNCTION set_updated_at();
 
 INSERT INTO plans (slug, name, dodo_product_id, price_micros, credits_micros, sort_order)
 VALUES
-    ('starter',  'Starter',  'pdt_0NlWdvv62mvSfA3Zir3ng',  20000000,  30000000,  1),
-    ('builder',  'Builder',  'pdt_0NlWeDDe6NIILyv9tektu',  60000000, 100000000,  2),
-    ('pro',      'Pro',      'pdt_0NlWej45rWVjjAuqUNjrC', 200000000, 350000000,  3),
-    ('business', 'Business', 'pdt_0NlWfCTANBdjSI2ZTr48Q', 500000000, 910000000,  4)
+    ('starter',  'Starter',  'pdt_0NleIavFwkwJCJy2c9cKe',  20000000,  30000000,  1),
+    ('builder',  'Builder',  'pdt_0NleIejHQ3mnyg1HuKmrY',  60000000, 100000000,  2),
+    ('pro',      'Pro',      'pdt_0NleInH0ijd3pI3iEwIkV', 200000000, 350000000,  3),
+    ('business', 'Business', 'pdt_0NleIyEdsxP1cshL9Vo8g', 500000000, 910000000,  4)
 ON CONFLICT (slug) DO UPDATE SET
     name = EXCLUDED.name,
     dodo_product_id = EXCLUDED.dodo_product_id,
