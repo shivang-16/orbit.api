@@ -11,34 +11,18 @@ import (
 
 // Worker processes jobs in-process. Tests use this so they do not need SQS.
 type Worker struct {
-	jobs      chan Job
 	processor *Processor
 }
 
 func NewWorker(billing *billingRepository.Repository, pricing *pricingRepository.Repository) *Worker {
-	w := &Worker{
-		jobs:      make(chan Job, 256),
-		processor: NewProcessor(billing, pricing),
-	}
-	go w.loop()
-	return w
+	return &Worker{processor: NewProcessor(billing, pricing)}
 }
 
 func (w *Worker) Enqueue(job Job) {
 	if w == nil {
 		return
 	}
-	select {
-	case w.jobs <- job:
-	default:
-		go w.process(job)
-	}
-}
-
-func (w *Worker) loop() {
-	for job := range w.jobs {
-		w.process(job)
-	}
+	w.process(job)
 }
 
 func (w *Worker) process(job Job) {

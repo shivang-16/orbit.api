@@ -1,0 +1,37 @@
+package billing
+
+import (
+	"context"
+	"log"
+	"time"
+)
+
+type ReliableEnqueuer struct {
+	processor *Processor
+	fallback  Enqueuer
+}
+
+func NewReliableEnqueuer(processor *Processor, fallback Enqueuer) *ReliableEnqueuer {
+	return &ReliableEnqueuer{processor: processor, fallback: fallback}
+}
+
+func (e *ReliableEnqueuer) Enqueue(job Job) {
+	if e == nil {
+		return
+	}
+	if e.processor != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := e.processor.Process(ctx, job); err != nil {
+			log.Printf("billing: sync settle failed key=%s hold=%s: %v", job.IdempotencyKey, job.HoldID, err)
+			if e.fallback != nil {
+				e.fallback.Enqueue(job)
+			}
+			return
+		}
+		return
+	}
+	if e.fallback != nil {
+		e.fallback.Enqueue(job)
+	}
+}

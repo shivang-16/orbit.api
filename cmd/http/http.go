@@ -44,7 +44,7 @@ import (
 	webhookService "github.com/shivang-16/orbit.api/internal/services/webhook"
 )
 
-func Start(_ context.Context, cfg config.Config) {
+func Start(ctx context.Context, cfg config.Config) {
 	if cfg.ClerkSecretKey == "" {
 		log.Fatal("CLERK_SECRET_KEY is required")
 	}
@@ -79,17 +79,20 @@ func Start(_ context.Context, cfg config.Config) {
 	orgSvc := organizationService.NewService(orgRepo)
 	orgCtrl := organizationController.NewController(orgSvc)
 
-	inferenceSvc := inferenceService.NewService(catalogueRepo, orgRepo, cfg)
-	inferenceCtrl := inferenceController.NewController(inferenceSvc, billingPublisher, orgRepo)
-	openaiCompatCtrl := openaiController.NewController(inferenceSvc, catalogueRepo, billingPublisher)
-	anthropicCompatCtrl := anthropicController.NewController(inferenceSvc, billingPublisher)
+	billingRepo := billingRepository.NewRepository(db.DB())
+	reserver := billingService.NewReserver(billingRepo, pricingRepo, cfg)
+	inferenceSvc := inferenceService.NewService(catalogueRepo, reserver, cfg)
+	processor := billingService.NewProcessor(billingRepo, pricingRepo)
+	billingEnqueuer := billingService.NewReliableEnqueuer(processor, billingPublisher)
+	inferenceCtrl := inferenceController.NewController(inferenceSvc, billingEnqueuer, orgRepo)
+	openaiCompatCtrl := openaiController.NewController(inferenceSvc, catalogueRepo, billingEnqueuer)
+	anthropicCompatCtrl := anthropicController.NewController(inferenceSvc, billingEnqueuer)
 	apiKeyAuth := apikeyMiddleware.New(apiKeyRepo)
 
 	planRepo := planRepository.NewRepository(db.DB())
 	planSvc := planService.NewService(planRepo)
 	planCtrl := planController.NewController(planSvc)
 
-	billingRepo := billingRepository.NewRepository(db.DB())
 	dodoClient := dodo.New(cfg)
 	checkoutSvc := checkoutService.NewService(dodoClient, clerkClient, planRepo, orgRepo, cfg)
 	checkoutCtrl := checkoutController.NewController(checkoutSvc)
@@ -99,6 +102,8 @@ func Start(_ context.Context, cfg config.Config) {
 
 	creditsSvc := creditsService.NewService(billingRepo, orgRepo)
 	creditsCtrl := creditsController.NewController(creditsSvc)
+
+	billingService.StartHoldReclaimer(ctx, billingRepo)
 
 	healthSvc := healthService.NewService(db)
 	healthCtrl := healthController.NewController(healthSvc)

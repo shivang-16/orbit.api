@@ -8,8 +8,11 @@ func TestLoadFileConfig(t *testing.T) {
 	if cfg.Credits.SignupMicros != 2_000_000 {
 		t.Fatalf("signup_micros = %d", cfg.Credits.SignupMicros)
 	}
-	if cfg.Credits.LowBalanceThresholdMicros != 1_000_000 {
+	if cfg.Credits.LowBalanceThresholdMicros != 10_000 {
 		t.Fatalf("low_balance_threshold_micros = %d", cfg.Credits.LowBalanceThresholdMicros)
+	}
+	if cfg.Credits.DefaultOutputTokens != 4096 {
+		t.Fatalf("default_output_tokens = %d", cfg.Credits.DefaultOutputTokens)
 	}
 	if cfg.RateLimits.Organization.RequestsPerMinute != 60 || cfg.RateLimits.Organization.Concurrent != 5 {
 		t.Fatalf("organization limits = %+v", cfg.RateLimits.Organization)

@@ -27,13 +27,16 @@ func Start(ctx context.Context, cfg config.Config) {
 		log.Fatalf("sqs: %v", err)
 	}
 
+	billingRepo := billingRepository.NewRepository(db.DB())
 	processor := billingService.NewProcessor(
-		billingRepository.NewRepository(db.DB()),
+		billingRepo,
 		pricingRepository.NewRepository(db.DB()),
 	)
 
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	billingService.StartHoldReclaimer(ctx, billingRepo)
 
 	log.Printf("orbit.api billing worker listening on %s", cfg.SQS.BillingQueueURL)
 	if err := billingService.RunConsumer(ctx, sqsClient, processor); err != nil && err != context.Canceled {

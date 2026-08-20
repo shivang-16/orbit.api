@@ -18,6 +18,7 @@ type Job struct {
 	LatencyMS        int    `json:"latency_ms"`
 	Status           string `json:"status"`
 	Error            string `json:"error"`
+	HoldID           string `json:"hold_id,omitempty"`
 }
 
 func NewIdempotencyKey() string {

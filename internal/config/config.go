@@ -33,6 +33,7 @@ type Server struct {
 type Credits struct {
 	SignupMicros              int64 `yaml:"signup_micros"`
 	LowBalanceThresholdMicros int64 `yaml:"low_balance_threshold_micros"`
+	DefaultOutputTokens       int   `yaml:"default_output_tokens"`
 }
 
 type RateLimits struct {

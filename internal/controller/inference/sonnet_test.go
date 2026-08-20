@@ -68,11 +68,11 @@ func TestChatSonnet45(t *testing.T) {
 	catalogueRepo := catalogueRepository.NewRepository(db.DB())
 	apiKeyRepo := apikeyRepository.NewRepository(db.DB())
 	orgRepo := organizationRepository.NewRepository(db.DB())
-	billingWorker := billingService.NewWorker(
-		billingRepository.NewRepository(db.DB()),
-		pricingRepository.NewRepository(db.DB()),
-	)
-	svc := inferenceService.NewService(catalogueRepo, orgRepo, cfg)
+	billingRepo := billingRepository.NewRepository(db.DB())
+	pricingRepo := pricingRepository.NewRepository(db.DB())
+	billingWorker := billingService.NewWorker(billingRepo, pricingRepo)
+	reserver := billingService.NewReserver(billingRepo, pricingRepo, cfg)
+	svc := inferenceService.NewService(catalogueRepo, reserver, cfg)
 	ctrl := inferenceController.NewController(svc, billingWorker, orgRepo)
 
 	r := chi.NewRouter()
@@ -170,11 +170,11 @@ func TestChatSonnet45Stream(t *testing.T) {
 	catalogueRepo := catalogueRepository.NewRepository(db.DB())
 	apiKeyRepo := apikeyRepository.NewRepository(db.DB())
 	orgRepo := organizationRepository.NewRepository(db.DB())
-	billingWorker := billingService.NewWorker(
-		billingRepository.NewRepository(db.DB()),
-		pricingRepository.NewRepository(db.DB()),
-	)
-	svc := inferenceService.NewService(catalogueRepo, orgRepo, cfg)
+	billingRepo := billingRepository.NewRepository(db.DB())
+	pricingRepo := pricingRepository.NewRepository(db.DB())
+	billingWorker := billingService.NewWorker(billingRepo, pricingRepo)
+	reserver := billingService.NewReserver(billingRepo, pricingRepo, cfg)
+	svc := inferenceService.NewService(catalogueRepo, reserver, cfg)
 	ctrl := inferenceController.NewController(svc, billingWorker, orgRepo)
 
 	r := chi.NewRouter()
@@ -242,9 +242,8 @@ func TestChatSonnet45Stream(t *testing.T) {
 		t.Fatalf("response is missing the final metadata/usage SSE event:\n%s", raw)
 	}
 
-	// The billing worker records usage asynchronously (see
-	// billingService.Worker.Enqueue): wait for the new ledger row instead
-	// of racing t.Cleanup's db.Close() against that background write.
+	// Billing is recorded before the HTTP handler returns; this wait is
+	// only a safety net if a future path goes async again.
 	deadline := time.Now().Add(5 * time.Second)
 	var logged, charged int
 	for time.Now().Before(deadline) {

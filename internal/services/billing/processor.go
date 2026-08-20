@@ -48,22 +48,13 @@ func (p *Processor) Process(ctx context.Context, job Job) error {
 		Error:              job.Error,
 		AmountMicros:       vendorAmount,
 		VendorAmountMicros: vendorAmount,
+		HoldID:             job.HoldID,
 	}); err != nil {
 		return fmt.Errorf("record billing: %w", err)
 	}
 	log.Printf(
-		"billing: recorded org=%s model=%s amount_micros=%d in=%d out=%d status=%s key=%s",
-		job.OrganizationID, job.ModelCatalogueID, vendorAmount, job.InputTokens, job.OutputTokens, job.Status, job.IdempotencyKey,
+		"billing: recorded org=%s model=%s amount_micros=%d in=%d out=%d status=%s key=%s hold=%s",
+		job.OrganizationID, job.ModelCatalogueID, vendorAmount, job.InputTokens, job.OutputTokens, job.Status, job.IdempotencyKey, job.HoldID,
 	)
 	return nil
-}
-
-func chargeMicros(inputTokens, outputTokens int, inputPerMillion, outputPerMillion int64) int64 {
-	if inputTokens < 0 {
-		inputTokens = 0
-	}
-	if outputTokens < 0 {
-		outputTokens = 0
-	}
-	return (int64(inputTokens)*inputPerMillion + int64(outputTokens)*outputPerMillion) / 1_000_000
 }

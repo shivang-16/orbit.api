@@ -9,7 +9,9 @@ server:
 
 credits:
   signup_micros: 2000000
-  low_balance_threshold_micros: 1000000
+  # $0.01 — a request may start only if remaining covers this floor and the hold.
+  low_balance_threshold_micros: 10000
+  default_output_tokens: 4096
 
 rate_limits:
   organization:
