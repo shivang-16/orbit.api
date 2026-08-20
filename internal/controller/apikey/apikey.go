@@ -68,6 +68,11 @@ func writeServiceError(w http.ResponseWriter, err error, fallback string) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "no organization"})
 	case errors.Is(err, apikeyService.ErrForbidden):
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "not a member of this organization"})
+	case errors.Is(err, apikeyService.ErrAdminRequired):
+		writeJSON(w, http.StatusForbidden, map[string]string{
+			"error": "only organization admins can delete API keys",
+			"code":  "admin_required",
+		})
 	case errors.Is(err, apikeyService.ErrNotFound):
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "api key not found"})
 	default:

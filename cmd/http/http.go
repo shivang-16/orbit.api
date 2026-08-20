@@ -76,7 +76,7 @@ func Start(ctx context.Context, cfg config.Config) {
 	apiKeySvc := apikeyService.NewService(apiKeyRepo, orgRepo)
 	apiKeyCtrl := apikeyController.NewController(apiKeySvc)
 
-	orgSvc := organizationService.NewService(orgRepo)
+	orgSvc := organizationService.NewService(db.DB(), orgRepo, userRepo)
 	orgCtrl := organizationController.NewController(orgSvc)
 
 	billingRepo := billingRepository.NewRepository(db.DB())
@@ -97,7 +97,7 @@ func Start(ctx context.Context, cfg config.Config) {
 	checkoutSvc := checkoutService.NewService(dodoClient, clerkClient, planRepo, orgRepo, cfg)
 	checkoutCtrl := checkoutController.NewController(checkoutSvc)
 
-	dodoWebhookSvc := webhookService.NewDodoService(billingRepo, planRepo)
+	dodoWebhookSvc := webhookService.NewDodoService(billingRepo, planRepo, orgRepo)
 	webhookCtrl := webhookController.NewController(cfg.Dodo.WebhookKey, dodoWebhookSvc)
 
 	creditsSvc := creditsService.NewService(billingRepo, orgRepo)

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	authMiddleware "github.com/shivang-16/orbit.api/internal/middleware/auth"
+	"github.com/shivang-16/orbit.api/internal/model"
 	apikeyRepository "github.com/shivang-16/orbit.api/internal/repositories/apikey"
 	organizationRepository "github.com/shivang-16/orbit.api/internal/repositories/organization"
 )
@@ -16,6 +17,7 @@ var (
 	ErrInvalid        = errors.New("invalid request")
 	ErrNoOrganization = errors.New("no organization")
 	ErrForbidden      = errors.New("forbidden")
+	ErrAdminRequired  = errors.New("admin required")
 	ErrNotFound       = errors.New("not found")
 )
 
@@ -32,7 +34,7 @@ func NewService(
 }
 
 func (s *Service) List(ctx context.Context, organizationID string) (*ListResponse, error) {
-	orgID, err := s.orgIDForUser(ctx, organizationID)
+	orgID, role, err := s.orgAccessForUser(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -41,7 +43,12 @@ func (s *Service) List(ctx context.Context, organizationID string) (*ListRespons
 	if err != nil {
 		return nil, fmt.Errorf("list api keys: %w", err)
 	}
-	return &ListResponse{Keys: keys, Total: len(keys)}, nil
+	return &ListResponse{
+		Keys:      keys,
+		Total:     len(keys),
+		Role:      role,
+		CanDelete: role == model.OrgRoleAdmin,
+	}, nil
 }
 
 func (s *Service) Create(ctx context.Context, req CreateRequest) (*CreateResponse, error) {
@@ -54,7 +61,7 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (*CreateRespons
 		return nil, fmt.Errorf("missing user id")
 	}
 
-	orgID, err := s.orgIDForUser(ctx, req.OrganizationID)
+	orgID, _, err := s.orgAccessForUser(ctx, req.OrganizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -85,9 +92,12 @@ func (s *Service) Delete(ctx context.Context, id, organizationID string) error {
 		return ErrNotFound
 	}
 
-	orgID, err := s.orgIDForUser(ctx, organizationID)
+	orgID, role, err := s.orgAccessForUser(ctx, organizationID)
 	if err != nil {
 		return err
+	}
+	if role != model.OrgRoleAdmin {
+		return ErrAdminRequired
 	}
 
 	ok, err := s.keys.Deactivate(ctx, id, orgID)
@@ -100,30 +110,30 @@ func (s *Service) Delete(ctx context.Context, id, organizationID string) error {
 	return nil
 }
 
-func (s *Service) orgIDForUser(ctx context.Context, organizationID string) (string, error) {
+func (s *Service) orgAccessForUser(ctx context.Context, organizationID string) (string, model.OrgRole, error) {
 	userID, ok := authMiddleware.UserID(ctx)
 	if !ok {
-		return "", fmt.Errorf("missing user id")
+		return "", "", fmt.Errorf("missing user id")
 	}
 
 	organizationID = strings.TrimSpace(organizationID)
-	if organizationID != "" {
-		member, err := s.orgs.IsMember(ctx, userID, organizationID)
+	if organizationID == "" {
+		org, err := s.orgs.GetFirstForUser(ctx, userID)
 		if err != nil {
-			return "", fmt.Errorf("check organization: %w", err)
+			return "", "", fmt.Errorf("get organization: %w", err)
 		}
-		if !member {
-			return "", ErrForbidden
+		if org == nil {
+			return "", "", ErrNoOrganization
 		}
-		return organizationID, nil
+		organizationID = org.ID
 	}
 
-	org, err := s.orgs.GetFirstForUser(ctx, userID)
+	role, member, err := s.orgs.GetRole(ctx, userID, organizationID)
 	if err != nil {
-		return "", fmt.Errorf("get organization: %w", err)
+		return "", "", fmt.Errorf("check organization: %w", err)
 	}
-	if org == nil {
-		return "", ErrNoOrganization
+	if !member {
+		return "", "", ErrForbidden
 	}
-	return org.ID, nil
+	return organizationID, role, nil
 }

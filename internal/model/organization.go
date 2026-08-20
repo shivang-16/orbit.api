@@ -8,6 +8,7 @@ type Organization struct {
 	Slug                   string    `json:"slug" db:"slug"`
 	Description            string    `json:"description" db:"description"`
 	CreatedBy              string    `json:"created_by" db:"created_by"`
+	PlanSlug               string    `json:"plan_slug,omitempty" db:"plan_slug"`
 	CreditsGrantedMicros   int64     `json:"credits_granted_micros" db:"credits_granted_micros"`
 	CreditsUsedMicros      int64     `json:"credits_used_micros" db:"credits_used_micros"`
 	CreditsRemainingMicros int64     `json:"credits_remaining_micros" db:"credits_remaining_micros"`

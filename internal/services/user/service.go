@@ -75,12 +75,17 @@ func (s *Service) createUserWithDefaultOrg(ctx context.Context, user *model.User
 	}
 	defer tx.Rollback()
 
+	orgs := organizationRepository.NewRepository(tx)
+	if err := orgs.LockCreator(ctx, user.ID); err != nil {
+		return nil, fmt.Errorf("lock creator: %w", err)
+	}
+
 	created, err := userRepository.NewRepository(tx).Create(ctx, user)
 	if err != nil {
 		return nil, fmt.Errorf("create user: %w", err)
 	}
 
-	org, err := organizationRepository.NewRepository(tx).CreateDefaultForUser(ctx, created.ID)
+	org, err := orgs.CreateDefaultForUser(ctx, created.ID)
 	if err != nil {
 		return nil, fmt.Errorf("create default organization: %w", err)
 	}
@@ -113,6 +118,10 @@ func (s *Service) ensureDefaultOrg(ctx context.Context, userID string) error {
 	defer tx.Rollback()
 
 	orgs := organizationRepository.NewRepository(tx)
+	if err := orgs.LockCreator(ctx, userID); err != nil {
+		return fmt.Errorf("lock creator: %w", err)
+	}
+
 	has, err = orgs.HasMembership(ctx, userID)
 	if err != nil {
 		return fmt.Errorf("check organization: %w", err)

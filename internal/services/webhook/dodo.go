@@ -10,17 +10,24 @@ import (
 	"strings"
 	"time"
 
+	"github.com/shivang-16/orbit.api/internal/model"
 	billingRepository "github.com/shivang-16/orbit.api/internal/repositories/billing"
+	organizationRepository "github.com/shivang-16/orbit.api/internal/repositories/organization"
 	planRepository "github.com/shivang-16/orbit.api/internal/repositories/plan"
 )
 
 type DodoService struct {
 	billing *billingRepository.Repository
 	plans   *planRepository.Repository
+	orgs    *organizationRepository.Repository
 }
 
-func NewDodoService(billing *billingRepository.Repository, plans *planRepository.Repository) *DodoService {
-	return &DodoService{billing: billing, plans: plans}
+func NewDodoService(
+	billing *billingRepository.Repository,
+	plans *planRepository.Repository,
+	orgs *organizationRepository.Repository,
+) *DodoService {
+	return &DodoService{billing: billing, plans: plans, orgs: orgs}
 }
 
 type dodoEvent struct {
@@ -117,6 +124,10 @@ func (s *DodoService) handleSubscriptionGrant(ctx context.Context, eventType str
 		return fmt.Errorf("grant credits: %w", err)
 	}
 
+	if err := s.attachPlan(ctx, orgID, planSlug); err != nil {
+		return err
+	}
+
 	log.Printf("dodo webhook: %s granted %d micros to org %s (plan=%s, key=%s)", eventType, creditsMicros, orgID, planSlug, idempotencyKey)
 	return nil
 }
@@ -161,10 +172,20 @@ func (s *DodoService) handlePaymentSucceeded(ctx context.Context, raw json.RawMe
 		return fmt.Errorf("grant credits: %w", err)
 	}
 
+	if err := s.attachPlan(ctx, orgID, planSlug); err != nil {
+		return err
+	}
+
 	log.Printf("dodo webhook: payment.succeeded granted %d micros to org %s (plan=%s, payment=%s)", creditsMicros, orgID, planSlug, paymentID)
 	return nil
 }
 
+// resolveGrant figures out which org gets credited, for which plan tier, and
+// how much. The plan is always resolved against our own `plans` table (by
+// id, then slug, then Dodo product id) rather than trusted from raw webhook
+// metadata, so a mangled or stale metadata value can never produce a plan
+// slug that doesn't exist — that used to make attachPlan fail after credits
+// had already been granted.
 func (s *DodoService) resolveGrant(ctx context.Context, obj dodoObject) (orgID, planSlug string, creditsMicros int64, err error) {
 	meta := mergeMetadata(obj.Metadata)
 	if obj.Customer != nil {
@@ -176,39 +197,71 @@ func (s *DodoService) resolveGrant(ctx context.Context, obj dodoObject) (orgID, 
 	}
 
 	orgID = firstNonEmpty(meta["organization_id"], meta["organizationId"])
-	planSlug = firstNonEmpty(meta["plan_slug"], meta["planId"], meta["plan_id"])
-	creditsMicros = parseInt64(meta["credits_micros"])
+
+	plan, lookupErr := s.resolvePlan(ctx, meta, obj)
+	if lookupErr != nil {
+		return "", "", 0, lookupErr
+	}
+	if plan != nil {
+		return orgID, plan.Slug, plan.CreditsMicros, nil
+	}
+
+	// No plan record matched — fall back to whatever credits amount Dodo
+	// echoed back so we still grant something, but we cannot attach a tier.
+	return orgID, "", parseInt64(meta["credits_micros"]), nil
+}
+
+// resolvePlan looks up the plan a checkout was for, preferring identifiers
+// we control over ones a payment provider merely echoes back. plan_id is
+// our plans.id UUID (set by CreateCheckout); plan_slug is the human slug;
+// the Dodo product id is the last resort for older checkouts that predate
+// metadata tagging.
+func (s *DodoService) resolvePlan(ctx context.Context, meta map[string]string, obj dodoObject) (*model.Plan, error) {
+	if planID := firstNonEmpty(meta["plan_id"]); planID != "" {
+		found, err := s.plans.GetByID(ctx, planID)
+		if err != nil {
+			return nil, fmt.Errorf("load plan by id: %w", err)
+		}
+		if found != nil {
+			return found, nil
+		}
+	}
+
+	if planSlug := firstNonEmpty(meta["plan_slug"]); planSlug != "" {
+		found, err := s.plans.GetBySlug(ctx, planSlug)
+		if err != nil {
+			return nil, fmt.Errorf("load plan by slug: %w", err)
+		}
+		if found != nil {
+			return found, nil
+		}
+	}
 
 	productID := firstNonEmpty(obj.ProductID)
 	if productID == "" && len(obj.Items) > 0 && obj.Items[0].Price != nil {
 		productID = obj.Items[0].Price.Product
 	}
-
-	if productID != "" && (creditsMicros <= 0 || planSlug == "") {
-		found, lookupErr := s.plans.GetByDodoProductID(ctx, productID)
-		if lookupErr != nil {
-			return "", "", 0, fmt.Errorf("load plan by product: %w", lookupErr)
+	if productID != "" {
+		found, err := s.plans.GetByDodoProductID(ctx, productID)
+		if err != nil {
+			return nil, fmt.Errorf("load plan by product: %w", err)
 		}
 		if found != nil {
-			if planSlug == "" {
-				planSlug = found.Slug
-			}
-			if creditsMicros <= 0 {
-				creditsMicros = found.CreditsMicros
-			}
-		}
-	}
-	if creditsMicros <= 0 && planSlug != "" {
-		found, lookupErr := s.plans.GetBySlug(ctx, planSlug)
-		if lookupErr != nil {
-			return "", "", 0, fmt.Errorf("load plan by slug: %w", lookupErr)
-		}
-		if found != nil {
-			creditsMicros = found.CreditsMicros
+			return found, nil
 		}
 	}
 
-	return orgID, planSlug, creditsMicros, nil
+	return nil, nil
+}
+
+func (s *DodoService) attachPlan(ctx context.Context, orgID, planSlug string) error {
+	if s.orgs == nil || orgID == "" || planSlug == "" {
+		return nil
+	}
+	if err := s.orgs.SetPlanSlugIfHigher(ctx, orgID, planSlug); err != nil {
+		return fmt.Errorf("attach plan %s to org %s: %w", planSlug, orgID, err)
+	}
+	return nil
 }
 
 func decodeObject(raw json.RawMessage) (dodoObject, error) {
