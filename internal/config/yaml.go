@@ -71,6 +71,9 @@ func (f fileConfig) validate() error {
 	if f.Credits.LowBalanceThresholdMicros < 1 {
 		return fmt.Errorf("credits.low_balance_threshold_micros must be >= 1")
 	}
+	if f.Credits.DefaultOutputTokens < 1 {
+		return fmt.Errorf("credits.default_output_tokens must be >= 1")
+	}
 	if f.Server.DashboardTimeoutSeconds < 1 {
 		return fmt.Errorf("server.dashboard_timeout_seconds must be >= 1")
 	}

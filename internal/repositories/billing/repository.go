@@ -34,6 +34,7 @@ type RecordParams struct {
 	Error              string
 	AmountMicros       int64
 	VendorAmountMicros int64
+	HoldID             string
 }
 
 // Record writes the inference row, a usage ledger entry, and bumps the org
@@ -89,6 +90,7 @@ func (r *Repository) Record(ctx context.Context, params RecordParams) error {
 		return fmt.Errorf("insert inference request: %w", err)
 	}
 
+	ledgerInserted := int64(0)
 	if params.AmountMicros > 0 && params.Status == "success" {
 		result, err := tx.ExecContext(
 			ctx,
@@ -109,31 +111,39 @@ func (r *Repository) Record(ctx context.Context, params RecordParams) error {
 			return fmt.Errorf("insert credit ledger: %w", err)
 		}
 
-		inserted, err := result.RowsAffected()
+		ledgerInserted, err = result.RowsAffected()
 		if err != nil {
 			return fmt.Errorf("credit ledger rows: %w", err)
 		}
-		if inserted == 0 {
-			return tx.Commit()
-		}
+	}
 
-		// credits_remaining_micros is intentionally allowed to go negative
-		// here: the pre-flight check in inference.Service blocks new
-		// requests once remaining drops below the $1 threshold, but the
-		// single request that crosses that threshold is allowed to finish
-		// and its actual cost is deducted in full. The organization settles
-		// the negative balance on its next credit grant/payment.
-		_, err = tx.ExecContext(
-			ctx,
-			`UPDATE organizations
-			 SET credits_used_micros = credits_used_micros + $1,
-			     credits_remaining_micros = credits_remaining_micros - $1
-			 WHERE id = $2`,
-			params.AmountMicros,
-			params.OrganizationID,
-		)
+	actual := params.AmountMicros
+	if params.Status != "success" {
+		actual = 0
+	}
+
+	if params.HoldID != "" {
+		// actual is the same AmountMicros written to credit_ledger above,
+		// so remaining/used stay aligned with the ledger after this tx.
+		settled, err := settleHoldTx(ctx, tx, params.HoldID, actual)
 		if err != nil {
-			return fmt.Errorf("update organization credits: %w", err)
+			return err
+		}
+		// Sweeper may have already refunded an expired hold (crash or
+		// SQS retry past TTL). The freeze is back on remaining; if this
+		// attempt is the first ledger insert, take actual usage now so
+		// remaining/used match the ledger. A retry sees ledgerInserted=0
+		// and skips.
+		if !settled.Applied && settled.Found && ledgerInserted > 0 && actual > 0 {
+			if err := debitUsageTx(ctx, tx, settled.OrganizationID, actual); err != nil {
+				return err
+			}
+		}
+	} else if ledgerInserted > 0 {
+		// Legacy path (jobs recorded before holds): deduct actual usage
+		// only when this attempt inserted the ledger row.
+		if err := debitUsageTx(ctx, tx, params.OrganizationID, params.AmountMicros); err != nil {
+			return err
 		}
 	}
 

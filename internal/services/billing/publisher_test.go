@@ -14,6 +14,15 @@ func TestDecodeJobRequiresStableIdentity(t *testing.T) {
 		t.Fatalf("decoded job = %+v", job)
 	}
 
+	withHold := `{"idempotency_key":"abc","organization_id":"org-1","hold_id":"hold-1"}`
+	job, err = DecodeJob(withHold)
+	if err != nil {
+		t.Fatalf("DecodeJob hold: %v", err)
+	}
+	if job.HoldID != "hold-1" {
+		t.Fatalf("hold_id = %q", job.HoldID)
+	}
+
 	if _, err := DecodeJob(`{"organization_id":"org-1"}`); err == nil {
 		t.Fatal("expected missing idempotency_key to fail")
 	}

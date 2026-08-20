@@ -94,6 +94,10 @@ func responsesBody(modelID string, req ConverseRequest) ([]byte, error) {
 		Store:        false,
 	}
 	payload.MaxOutputTokens = req.MaxTokens
+	if payload.MaxOutputTokens == nil || *payload.MaxOutputTokens < 1 {
+		maxTokens := 4096
+		payload.MaxOutputTokens = &maxTokens
+	}
 	payload.Temperature = req.Temperature
 	payload.TopP = req.TopP
 

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+
+	"github.com/shivang-16/orbit.api/internal/model"
 )
 
 // ContentBlock is a tagged union mirroring Bedrock Converse's own content
@@ -179,14 +181,31 @@ func (s *Service) Converse(ctx context.Context, modelIdentifier string, req Conv
 		return nil, err
 	}
 	defer release()
-	if err := s.requireCredits(ctx); err != nil {
-		return nil, err
-	}
 	entry, err := s.resolveModel(ctx, modelIdentifier)
 	if err != nil {
 		return nil, err
 	}
+	requestedMax := 0
+	if req.MaxTokens != nil {
+		requestedMax = *req.MaxTokens
+	}
+	hold, err := s.placeHold(ctx, entry.ID, EstimateInputTokens(converseInputText(req)), requestedMax)
+	if err != nil {
+		return nil, err
+	}
+	maxTokens := hold.MaxTokens
+	req.MaxTokens = &maxTokens
 
+	result, err := s.dispatchConverse(ctx, entry, req, w, sink)
+	if err != nil {
+		s.releaseHold(ctx, hold.ID)
+		return nil, err
+	}
+	result.HoldID = hold.ID
+	return result, nil
+}
+
+func (s *Service) dispatchConverse(ctx context.Context, entry *model.ModelCatalogue, req ConverseRequest, w http.ResponseWriter, sink StreamSink) (*ChatResult, error) {
 	if usesMantleResponses(entry.ModelID) {
 		return s.callMantle(ctx, entry, req, sink, w)
 	}
@@ -276,26 +295,21 @@ func converseBody(req ConverseRequest) ([]byte, error) {
 	}
 
 	var ic inferenceConfig
-	hasIC := false
-	if req.MaxTokens != nil {
+	if req.MaxTokens != nil && *req.MaxTokens > 0 {
 		ic.MaxTokens = *req.MaxTokens
-		hasIC = true
+	} else {
+		ic.MaxTokens = 4096
 	}
 	if req.Temperature != nil {
 		ic.Temperature = *req.Temperature
-		hasIC = true
 	}
 	if req.TopP != nil {
 		ic.TopP = *req.TopP
-		hasIC = true
 	}
 	if len(req.StopSequences) > 0 {
 		ic.StopSequences = req.StopSequences
-		hasIC = true
 	}
-	if hasIC {
-		payload.InferenceConfig = &ic
-	}
+	payload.InferenceConfig = &ic
 
 	return json.Marshal(payload)
 }

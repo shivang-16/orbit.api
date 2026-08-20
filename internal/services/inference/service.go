@@ -34,51 +34,41 @@ import (
 	authMiddleware "github.com/shivang-16/orbit.api/internal/middleware/auth"
 	"github.com/shivang-16/orbit.api/internal/model"
 	catalogueRepository "github.com/shivang-16/orbit.api/internal/repositories/catalogue"
-	organizationRepository "github.com/shivang-16/orbit.api/internal/repositories/organization"
 )
 
 var (
 	ErrInvalid             = errors.New("invalid request")
 	ErrModelNotFound       = errors.New("model not found")
 	ErrUnsupportedProvider = errors.New("model provider not supported yet")
-	// ErrLowCredits is returned when an organization's remaining balance is
-	// below lowBalanceThresholdMicros. Checked synchronously before calling
-	// the model provider so a request never gets a paid response while out
-	// of credit. See internal/repositories/billing.Repository.Record for the
-	// matching post-request deduction, which is allowed to take the balance
-	// negative for the single request that crosses the threshold.
+	// ErrLowCredits is returned when an organization cannot cover this
+	// request's cost ceiling (below the $0.01 floor, or the hold does not
+	// fit remaining). Checked before calling the model provider.
 	ErrLowCredits = errors.New("low on credits")
 )
 
 type Service struct {
-	catalogue                 *catalogueRepository.Repository
-	orgs                      *organizationRepository.Repository
-	bedrockAPIKey             string
-	bedrockRegion             string
-	lowBalanceThresholdMicros int64
-	httpClient                *http.Client
-	limiter                   limiter.Limiter
+	catalogue     *catalogueRepository.Repository
+	reserver      Reserver
+	bedrockAPIKey string
+	bedrockRegion string
+	httpClient    *http.Client
+	limiter       limiter.Limiter
 }
 
 func NewService(
 	catalogue *catalogueRepository.Repository,
-	orgs *organizationRepository.Repository,
+	reserver Reserver,
 	cfg config.Config,
 ) *Service {
 	timeout := time.Duration(cfg.Server.InferenceTimeoutSeconds) * time.Second
 	if timeout < time.Second {
 		timeout = 5 * time.Minute
 	}
-	lowBalance := cfg.Credits.LowBalanceThresholdMicros
-	if lowBalance < 1 {
-		lowBalance = 1_000_000
-	}
 	return &Service{
-		catalogue:                 catalogue,
-		orgs:                      orgs,
-		bedrockAPIKey:             cfg.AWSBedrockAPIKey,
-		bedrockRegion:             cfg.AWSBedrockRegion,
-		lowBalanceThresholdMicros: lowBalance,
+		catalogue:     catalogue,
+		reserver:      reserver,
+		bedrockAPIKey: cfg.AWSBedrockAPIKey,
+		bedrockRegion: cfg.AWSBedrockRegion,
 		httpClient: &http.Client{
 			Timeout: timeout,
 			Transport: &http.Transport{
@@ -106,6 +96,7 @@ type ChatResult struct {
 	InputTokens  int
 	OutputTokens int
 	LatencyMS    int
+	HoldID       string
 }
 
 // Chat validates the request, enforces the credit gate, resolves the
@@ -120,13 +111,26 @@ func (s *Service) Chat(ctx context.Context, modelID string, req ChatRequest, w h
 		return nil, err
 	}
 	defer release()
-	if err := s.requireCredits(ctx); err != nil {
-		return nil, err
-	}
 	entry, err := s.resolveModel(ctx, modelID)
 	if err != nil {
 		return nil, err
 	}
+	hold, err := s.placeHold(ctx, entry.ID, EstimateInputTokens(chatInputText(req)), req.MaxTokens)
+	if err != nil {
+		return nil, err
+	}
+	req.MaxTokens = hold.MaxTokens
+
+	result, err := s.dispatchChat(ctx, entry, req, w)
+	if err != nil {
+		s.releaseHold(ctx, hold.ID)
+		return nil, err
+	}
+	result.HoldID = hold.ID
+	return result, nil
+}
+
+func (s *Service) dispatchChat(ctx context.Context, entry *model.ModelCatalogue, req ChatRequest, w http.ResponseWriter) (*ChatResult, error) {
 
 	if usesMantleResponses(entry.ModelID) {
 		var sink StreamSink
@@ -357,28 +361,38 @@ func (s *Service) acquireRateLimit(ctx context.Context, w http.ResponseWriter) (
 	return res.Release, nil
 }
 
-func (s *Service) requireCredits(ctx context.Context) error {
-	if s.orgs == nil {
-		return nil
+func (s *Service) placeHold(ctx context.Context, catalogueID string, inputTokens, requestedMaxTokens int) (*Hold, error) {
+	if s.reserver == nil {
+		return nil, ErrLowCredits
 	}
 	orgID, ok := apikeyMiddleware.OrganizationID(ctx)
 	if !ok || orgID == "" {
-		return nil
+		return nil, ErrLowCredits
 	}
-
-	remaining, found, err := s.orgs.GetCreditsRemaining(ctx, orgID)
+	hold, err := s.reserver.Reserve(ctx, ReserveRequest{
+		OrganizationID:     orgID,
+		CatalogueID:        catalogueID,
+		InputTokens:        inputTokens,
+		RequestedMaxTokens: requestedMaxTokens,
+	})
 	if err != nil {
-		return fmt.Errorf("check credits: %w", err)
+		return nil, err
 	}
-	if !found {
-		log.Printf("inference: org=%s not found on credit check — blocking", orgID)
-		return ErrLowCredits
+	if hold == nil || hold.ID == "" || hold.MaxTokens < 1 {
+		return nil, ErrLowCredits
 	}
-	if remaining < s.lowBalanceThresholdMicros {
-		log.Printf("inference: org=%s blocked, remaining_micros=%d below threshold=%d", orgID, remaining, s.lowBalanceThresholdMicros)
-		return ErrLowCredits
+	log.Printf("inference: org=%s hold=%s amount_micros=%d max_tokens=%d", orgID, hold.ID, hold.AmountMicros, hold.MaxTokens)
+	return hold, nil
+}
+
+func (s *Service) releaseHold(ctx context.Context, holdID string) {
+	if s.reserver == nil || holdID == "" {
+		return
 	}
-	return nil
+	releaseCtx := context.WithoutCancel(ctx)
+	if err := s.reserver.Release(releaseCtx, holdID); err != nil {
+		log.Printf("inference: release hold=%s: %v", holdID, err)
+	}
 }
 
 func parseBedrockUsage(body []byte) (inputTokens, outputTokens, latencyMS int) {
@@ -423,9 +437,11 @@ func bedrockConverseBody(req ChatRequest) ([]byte, error) {
 		InferenceConfig *inferenceConfig `json:"inferenceConfig,omitempty"`
 	}{Messages: messages}
 
-	if req.MaxTokens > 0 || req.Temperature > 0 {
-		payload.InferenceConfig = &inferenceConfig{MaxTokens: req.MaxTokens, Temperature: req.Temperature}
+	maxTokens := req.MaxTokens
+	if maxTokens < 1 {
+		maxTokens = 4096
 	}
+	payload.InferenceConfig = &inferenceConfig{MaxTokens: maxTokens, Temperature: req.Temperature}
 
 	return json.Marshal(payload)
 }

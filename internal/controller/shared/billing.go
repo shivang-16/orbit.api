@@ -36,8 +36,8 @@ func RecordUsage(ctx context.Context, billing billingService.Enqueuer, logTag st
 	}
 
 	log.Printf(
-		"%s: enqueue billing org=%s key=%s model=%s in=%d out=%d latency_ms=%d status=%s",
-		logTag, orgID, apiKeyID, result.ModelCatalogueID, result.InputTokens, result.OutputTokens, result.LatencyMS, status,
+		"%s: enqueue billing org=%s key=%s model=%s in=%d out=%d latency_ms=%d status=%s hold=%s",
+		logTag, orgID, apiKeyID, result.ModelCatalogueID, result.InputTokens, result.OutputTokens, result.LatencyMS, status, result.HoldID,
 	)
 
 	billing.Enqueue(billingService.Job{
@@ -51,6 +51,7 @@ func RecordUsage(ctx context.Context, billing billingService.Enqueuer, logTag st
 		LatencyMS:        result.LatencyMS,
 		Status:           status,
 		Error:            errText,
+		HoldID:           result.HoldID,
 	})
 }
 

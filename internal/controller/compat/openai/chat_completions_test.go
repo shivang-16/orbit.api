@@ -27,7 +27,6 @@ import (
 	apikeyRepository "github.com/shivang-16/orbit.api/internal/repositories/apikey"
 	billingRepository "github.com/shivang-16/orbit.api/internal/repositories/billing"
 	catalogueRepository "github.com/shivang-16/orbit.api/internal/repositories/catalogue"
-	organizationRepository "github.com/shivang-16/orbit.api/internal/repositories/organization"
 	pricingRepository "github.com/shivang-16/orbit.api/internal/repositories/pricing"
 	apikeyService "github.com/shivang-16/orbit.api/internal/services/apikey"
 	billingService "github.com/shivang-16/orbit.api/internal/services/billing"
@@ -76,12 +75,11 @@ func newTestHarness(t *testing.T) *testHarness {
 
 	catalogueRepo := catalogueRepository.NewRepository(db.DB())
 	apiKeyRepo := apikeyRepository.NewRepository(db.DB())
-	orgRepo := organizationRepository.NewRepository(db.DB())
-	billingWorker := billingService.NewWorker(
-		billingRepository.NewRepository(db.DB()),
-		pricingRepository.NewRepository(db.DB()),
-	)
-	svc := inferenceService.NewService(catalogueRepo, orgRepo, cfg)
+	billingRepo := billingRepository.NewRepository(db.DB())
+	pricingRepo := pricingRepository.NewRepository(db.DB())
+	billingWorker := billingService.NewWorker(billingRepo, pricingRepo)
+	reserver := billingService.NewReserver(billingRepo, pricingRepo, cfg)
+	svc := inferenceService.NewService(catalogueRepo, reserver, cfg)
 	ctrl := openaiController.NewController(svc, catalogueRepo, billingWorker)
 
 	r := chi.NewRouter()
