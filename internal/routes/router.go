@@ -5,7 +5,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-	"github.com/go-chi/cors"
 
 	"github.com/shivang-16/orbit.api/internal/config"
 	apikeyController "github.com/shivang-16/orbit.api/internal/controller/apikey"
@@ -50,14 +49,11 @@ func New(
 	// No global request timeout here: the inference chat route can run for
 	// minutes when streaming a long completion, and needs its own, longer
 	// timeout instead of one shared with every other route. See v1.go.
-	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   cfg.CORSOrigins,
-		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Request-ID", "X-Organization-Id", "X-Api-Key", "Anthropic-Version", "Anthropic-Beta"},
-		ExposedHeaders:   []string{"Link"},
-		AllowCredentials: true,
-		MaxAge:           300,
-	}))
+	//
+	// CORS is deliberately NOT set globally here: the Clerk-cookie dashboard
+	// routes and the Bearer/X-Api-Key inference routes need opposite CORS
+	// policies (strict allowlist + credentials vs. any origin, no
+	// credentials), so each gets its own cors.Handler in v1.go instead.
 
 	r.Get("/health", health.Check)
 	r.Get("/ready", health.Ready)

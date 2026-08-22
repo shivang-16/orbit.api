@@ -5,6 +5,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/cors"
 
 	"github.com/shivang-16/orbit.api/internal/config"
 	apikeyController "github.com/shivang-16/orbit.api/internal/controller/apikey"
@@ -42,10 +43,41 @@ func registerV1(
 	webhooks *webhookController.Controller,
 	apiKeyAuth *apikeyMiddleware.Middleware,
 ) {
+	// Clerk-cookie routes: the browser sends the session cookie automatically,
+	// so an open origin allowlist would let any site ride a logged-in user's
+	// session (CSRF). Kept to a small, explicit allowlist with credentials on.
+	dashboardCORS := cors.Handler(cors.Options{
+		AllowedOrigins:   cfg.CORSOrigins,
+		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Request-ID", "X-Organization-Id"},
+		ExposedHeaders:   []string{"Link"},
+		AllowCredentials: true,
+		MaxAge:           300,
+	})
+
+	// Api-key routes (native chat + OpenAI/Anthropic compat): these
+	// authenticate with an "Authorization: Bearer sk-orbit-..." or
+	// "X-Api-Key" header that the caller sets explicitly, never an
+	// ambient browser credential, so there's nothing here for a strict
+	// per-origin allowlist to protect — it would only block the exact
+	// thing this surface exists for: any of Orbit's customers calling it
+	// straight from their own website with the official OpenAI/Anthropic
+	// SDKs. Origin is wildcarded and credentials are off (required by the
+	// CORS spec whenever Allow-Origin is "*").
+	apiKeyCORS := cors.Handler(cors.Options{
+		AllowedOrigins:   []string{"*"},
+		AllowedMethods:   []string{"GET", "POST", "OPTIONS"},
+		AllowedHeaders:   []string{"*"},
+		ExposedHeaders:   []string{"Link"},
+		AllowCredentials: false,
+		MaxAge:           300,
+	})
+
 	// Every ordinary route gets a tight 30s timeout. The inference chat
 	// route below is deliberately excluded and gets its own, much longer
 	// one, since a streamed completion can legitimately take minutes.
 	r.Group(func(r chi.Router) {
+		r.Use(dashboardCORS)
 		r.Use(middleware.Timeout(time.Duration(cfg.Server.DashboardTimeoutSeconds) * time.Second))
 
 		r.Get("/health", health.Check)
@@ -80,6 +112,7 @@ func registerV1(
 	// to the active organization. Same 5-minute timeout as API-key chat
 	// so a streamed completion is not cut off by the 30s dashboard budget.
 	r.Group(func(r chi.Router) {
+		r.Use(dashboardCORS)
 		r.Use(authMiddleware.Clerk)
 		r.Use(middleware.Timeout(time.Duration(cfg.Server.InferenceTimeoutSeconds) * time.Second))
 		r.Post("/playground/models/{id}/chat", inference.Playground)
@@ -91,6 +124,7 @@ func registerV1(
 	// OpenAI/Anthropic-compatible routes, so official SDKs authenticate
 	// exactly like a direct Orbit call — only base_url and api_key change.
 	r.Group(func(r chi.Router) {
+		r.Use(apiKeyCORS)
 		r.Use(apiKeyAuth.Authenticate)
 		r.Use(middleware.Timeout(time.Duration(cfg.Server.InferenceTimeoutSeconds) * time.Second))
 		r.Post("/models/{id}/chat", inference.Chat)
