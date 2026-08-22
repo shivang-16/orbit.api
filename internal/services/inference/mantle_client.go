@@ -133,14 +133,17 @@ func (s *Service) mantleStream(ctx context.Context, entry *model.ModelCatalogue,
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	// See chatStream: keeps an nginx/CDN hop from re-buffering our flushes.
+	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 
-	inputTokens, outputTokens, streamErr := relayResponsesStream(ctx, resp.Body, sink)
+	inputTokens, outputTokens, streamErr, cancelled := relayResponsesStream(ctx, resp.Body, sink)
 	latencyMS := int(time.Since(started).Milliseconds())
 
 	status := http.StatusOK
 	if streamErr {
 		status = http.StatusBadGateway
+		cancelled = false
 	}
 
 	return &ChatResult{
@@ -151,5 +154,6 @@ func (s *Service) mantleStream(ctx context.Context, entry *model.ModelCatalogue,
 		InputTokens:      inputTokens,
 		OutputTokens:     outputTokens,
 		LatencyMS:        latencyMS,
+		Cancelled:        cancelled,
 	}, nil
 }

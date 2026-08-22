@@ -16,18 +16,56 @@ import (
 // relayResponsesStream reads OpenAI Responses SSE from Mantle and emits
 // the same ConverseStream frames the existing OpenAI/Anthropic/native
 // sinks already understand (messageStart, contentBlockDelta, ...).
-func relayResponsesStream(ctx context.Context, body io.Reader, sink StreamSink) (inputTokens, outputTokens int, streamErr bool) {
-	adapter := &responsesStreamAdapter{ctx: ctx, sink: sink}
+func relayResponsesStream(ctx context.Context, body io.Reader, sink StreamSink) (inputTokens, outputTokens int, streamErr, cancelled bool) {
+	tracker := &writeTrackingSink{inner: sink}
+	adapter := &responsesStreamAdapter{ctx: ctx, sink: tracker}
 	err := scanSSE(body, adapter.handle)
-	if err != nil && !errors.Is(err, io.EOF) {
-		logger.Error(ctx, "inference: decode mantle event-stream", "error", err)
-		streamErr = true
-	}
 	if adapter.failed {
 		streamErr = true
+	} else if tracker.writeErr != nil {
+		if isClientWriteAbort(tracker.writeErr) {
+			logger.Info(ctx, "inference: stream stopped by client", "error", tracker.writeErr)
+			cancelled = true
+		} else {
+			streamErr = true
+		}
+	} else if err != nil && !errors.Is(err, io.EOF) {
+		if isRequestCanceled(err) {
+			logger.Info(ctx, "inference: stream stopped by client", "error", err)
+			cancelled = true
+		} else {
+			logger.Error(ctx, "inference: decode mantle event-stream", "error", err)
+			streamErr = true
+		}
+	}
+	if adapter.outputTokens == 0 && adapter.streamed.Len() > 0 {
+		adapter.outputTokens = EstimateTokens(adapter.streamed.String())
+	}
+	if streamErr {
+		cancelled = false
 	}
 	_ = sink.Close(streamErr)
-	return adapter.inputTokens, adapter.outputTokens, streamErr
+	return adapter.inputTokens, adapter.outputTokens, streamErr, cancelled
+}
+
+// writeTrackingSink records the first HandleFrame write error so we can
+// tell a client hang-up (broken pipe) apart from a Mantle read failure
+// (connection reset) — scanSSE surfaces both as a single error.
+type writeTrackingSink struct {
+	inner    StreamSink
+	writeErr error
+}
+
+func (s *writeTrackingSink) HandleFrame(eventType string, payload []byte) error {
+	err := s.inner.HandleFrame(eventType, payload)
+	if err != nil && s.writeErr == nil {
+		s.writeErr = err
+	}
+	return err
+}
+
+func (s *writeTrackingSink) Close(streamErr bool) error {
+	return s.inner.Close(streamErr)
 }
 
 type responsesStreamAdapter struct {
@@ -41,6 +79,7 @@ type responsesStreamAdapter struct {
 	stopReason   string
 	inputTokens  int
 	outputTokens int
+	streamed     strings.Builder
 	failed       bool
 }
 
@@ -71,6 +110,7 @@ func (a *responsesStreamAdapter) handle(event string, data []byte) error {
 		if err := a.ensureStarted(); err != nil {
 			return err
 		}
+		a.streamed.WriteString(text)
 		a.markOpen(0)
 		return a.sink.HandleFrame("contentBlockDelta", mustJSON(map[string]any{
 			"contentBlockIndex": 0,

@@ -25,6 +25,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/shivang-16/orbit.api/internal/config"
@@ -97,6 +98,10 @@ type ChatResult struct {
 	OutputTokens int
 	LatencyMS    int
 	HoldID       string
+	// Cancelled is true when the caller hung up mid-stream (playground
+	// Stop, aborted fetch). That is not a provider failure: tokens that
+	// already landed should still be billed.
+	Cancelled bool
 }
 
 // Chat validates the request, enforces the credit gate, resolves the
@@ -127,6 +132,7 @@ func (s *Service) Chat(ctx context.Context, modelID string, req ChatRequest, w h
 		return nil, err
 	}
 	result.HoldID = hold.ID
+	fillCancelledInput(result, chatInputText(req))
 	return result, nil
 }
 
@@ -265,16 +271,22 @@ func (s *Service) chatStream(ctx context.Context, entry *model.ModelCatalogue, p
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	// nginx and most CDNs buffer proxied responses by default, which would
+	// re-aggregate the frames we Flush one at a time and hand the client
+	// one large chunk at the end. Both headers opt that off.
+	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 
-	inputTokens, outputTokens, latencyMS, streamErr := relayBedrockStream(ctx, resp.Body, sink)
+	inputTokens, outputTokens, latencyMS, streamErr, cancelled := relayBedrockStream(ctx, resp.Body, sink)
 	if latencyMS == 0 {
 		latencyMS = int(time.Since(started).Milliseconds())
 	}
 
 	status := http.StatusOK
 	if streamErr {
+		// A provider failure always wins over a later client hang-up.
 		status = http.StatusBadGateway
+		cancelled = false
 	}
 
 	return &ChatResult{
@@ -285,6 +297,7 @@ func (s *Service) chatStream(ctx context.Context, entry *model.ModelCatalogue, p
 		InputTokens:      inputTokens,
 		OutputTokens:     outputTokens,
 		LatencyMS:        latencyMS,
+		Cancelled:        cancelled,
 	}, nil
 }
 
@@ -297,19 +310,33 @@ func (s *Service) chatStream(ctx context.Context, entry *model.ModelCatalogue, p
 // final token usage (for billing), and a message-type of "exception"
 // signals a stream failure that Bedrock can raise after the 200 has
 // already gone out.
-func relayBedrockStream(ctx context.Context, body io.Reader, sink StreamSink) (inputTokens, outputTokens, latencyMS int, streamErr bool) {
+func relayBedrockStream(ctx context.Context, body io.Reader, sink StreamSink) (inputTokens, outputTokens, latencyMS int, streamErr, cancelled bool) {
 	reader := bufio.NewReaderSize(body, 64*1024)
+	var streamed strings.Builder
+
+	finish := func(err bool, abort bool) (int, int, int, bool, bool) {
+		if outputTokens == 0 && streamed.Len() > 0 {
+			outputTokens = EstimateTokens(streamed.String())
+		}
+		_ = sink.Close(err)
+		return inputTokens, outputTokens, latencyMS, err, abort && !err
+	}
 
 	for {
 		frame, err := readAWSEventStreamFrame(reader)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				_ = sink.Close(streamErr)
-				return inputTokens, outputTokens, latencyMS, streamErr
+				return finish(streamErr, false)
+			}
+			if streamErr {
+				return finish(true, false)
+			}
+			if isRequestCanceled(err) {
+				logger.Info(ctx, "inference: stream stopped by client", "error", err)
+				return finish(false, true)
 			}
 			logger.Error(ctx, "inference: decode bedrock event-stream", "error", err)
-			_ = sink.Close(true)
-			return inputTokens, outputTokens, latencyMS, true
+			return finish(true, false)
 		}
 
 		eventType := frame.headers[":event-type"]
@@ -325,9 +352,26 @@ func relayBedrockStream(ctx context.Context, body io.Reader, sink StreamSink) (i
 			eventType = "message"
 		}
 
+		if eventType == "contentBlockDelta" {
+			var delta struct {
+				Delta struct {
+					Text string `json:"text"`
+				} `json:"delta"`
+			}
+			if json.Unmarshal(frame.payload, &delta) == nil {
+				streamed.WriteString(delta.Delta.Text)
+			}
+		}
+
 		if err := sink.HandleFrame(eventType, frame.payload); err != nil {
-			_ = sink.Close(true)
-			return inputTokens, outputTokens, latencyMS, true
+			if streamErr {
+				return finish(true, false)
+			}
+			if isClientWriteAbort(err) {
+				logger.Info(ctx, "inference: stream stopped by client", "error", err)
+				return finish(false, true)
+			}
+			return finish(true, false)
 		}
 
 		if eventType == "metadata" {

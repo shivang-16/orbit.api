@@ -202,6 +202,7 @@ func (s *Service) Converse(ctx context.Context, modelIdentifier string, req Conv
 		return nil, err
 	}
 	result.HoldID = hold.ID
+	fillCancelledInput(result, converseInputText(req))
 	return result, nil
 }
 

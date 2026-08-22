@@ -169,7 +169,7 @@ func TestRelayResponsesStream_TextAndUsage(t *testing.T) {
 		``,
 	}, "\n")
 	sink := &recordingSink{}
-	in, out, streamErr := relayResponsesStream(context.Background(), bytes.NewBufferString(sse), sink)
+	in, out, streamErr, _ := relayResponsesStream(context.Background(), bytes.NewBufferString(sse), sink)
 	if streamErr {
 		t.Fatalf("streamErr = true")
 	}
@@ -207,7 +207,7 @@ func TestRelayResponsesStream_ToolCall(t *testing.T) {
 		``,
 	}, "\n")
 	sink := &recordingSink{}
-	_, _, streamErr := relayResponsesStream(context.Background(), bytes.NewBufferString(sse), sink)
+	_, _, streamErr, _ := relayResponsesStream(context.Background(), bytes.NewBufferString(sse), sink)
 	if streamErr {
 		t.Fatalf("streamErr = true")
 	}
@@ -223,6 +223,23 @@ func TestRelayResponsesStream_ToolCall(t *testing.T) {
 	}
 	if !strings.Contains(joined, `"stopReason":"tool_use"`) {
 		t.Fatalf("expected tool_use stop: %s", joined)
+	}
+}
+
+func TestRelayResponsesStream_FailedWinsOverCancel(t *testing.T) {
+	sse := strings.Join([]string{
+		`data: {"type":"response.output_text.delta","delta":"hi"}`,
+		``,
+		`data: {"type":"response.failed","error":{"message":"boom"}}`,
+		``,
+	}, "\n")
+	_, _, streamErr, cancelled := relayResponsesStream(
+		context.Background(),
+		bytes.NewBufferString(sse),
+		failOnEventSink{event: "error", err: errors.New("write tcp: broken pipe")},
+	)
+	if !streamErr || cancelled {
+		t.Fatalf("failed+pipe: streamErr=%v cancelled=%v", streamErr, cancelled)
 	}
 }
 

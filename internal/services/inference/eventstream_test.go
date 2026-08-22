@@ -3,6 +3,7 @@ package inference
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/binary"
 	"errors"
 	"hash/crc32"
@@ -211,5 +212,110 @@ func TestParseEventStreamHeaders_AllValueTypesSkipCorrectly(t *testing.T) {
 	// desynced parsing of the header that follows them (checked above).
 	if _, ok := headers["a-byte-array"]; ok {
 		t.Fatalf("byte-array header unexpectedly present in string map")
+	}
+}
+
+type errOnlyReader struct{ err error }
+
+func (e errOnlyReader) Read([]byte) (int, error) { return 0, e.err }
+
+func TestRelayBedrockStream_ClientAbortUsesStreamedTokens(t *testing.T) {
+	var buf bytes.Buffer
+	buf.Write(encodeFrame(t, map[string]string{
+		":event-type":   "contentBlockDelta",
+		":message-type": "event",
+	}, []byte(`{"delta":{"text":"abcdefghijklmnop"}}`)))
+
+	body := io.MultiReader(bytes.NewReader(buf.Bytes()), errOnlyReader{err: context.Canceled})
+	in, out, _, streamErr, cancelled := relayBedrockStream(context.Background(), body, &passthroughSink{w: io.Discard})
+	if streamErr {
+		t.Fatalf("user abort should not be a stream error")
+	}
+	if !cancelled {
+		t.Fatalf("expected cancelled")
+	}
+	if in != 0 {
+		t.Fatalf("input tokens = %d, want 0 until Chat fills the prompt estimate", in)
+	}
+	if out != 4 {
+		t.Fatalf("output tokens = %d, want 4 (16 runes / 4)", out)
+	}
+}
+
+func TestRelayBedrockStream_TimeoutIsProviderError(t *testing.T) {
+	body := errOnlyReader{err: context.DeadlineExceeded}
+	_, _, _, streamErr, cancelled := relayBedrockStream(context.Background(), body, &passthroughSink{w: io.Discard})
+	if !streamErr || cancelled {
+		t.Fatalf("timeout: streamErr=%v cancelled=%v", streamErr, cancelled)
+	}
+}
+
+func TestRelayBedrockStream_UpstreamResetIsProviderError(t *testing.T) {
+	body := errOnlyReader{err: errors.New("read tcp: connection reset by peer")}
+	_, _, _, streamErr, cancelled := relayBedrockStream(context.Background(), body, &passthroughSink{w: io.Discard})
+	if !streamErr || cancelled {
+		t.Fatalf("reset: streamErr=%v cancelled=%v", streamErr, cancelled)
+	}
+}
+
+func TestRelayBedrockStream_ExceptionThenAbortKeepsError(t *testing.T) {
+	var buf bytes.Buffer
+	buf.Write(encodeFrame(t, map[string]string{
+		":exception-type": "modelStreamErrorException",
+		":message-type":   "exception",
+	}, []byte(`{"message":"stream failed"}`)))
+	body := io.MultiReader(bytes.NewReader(buf.Bytes()), errOnlyReader{err: context.Canceled})
+	_, _, _, streamErr, cancelled := relayBedrockStream(context.Background(), body, &passthroughSink{w: io.Discard})
+	if !streamErr || cancelled {
+		t.Fatalf("exception+abort: streamErr=%v cancelled=%v", streamErr, cancelled)
+	}
+}
+
+type failOnEventSink struct {
+	event string
+	err   error
+}
+
+func (s failOnEventSink) HandleFrame(eventType string, _ []byte) error {
+	if eventType == s.event {
+		return s.err
+	}
+	return nil
+}
+
+func (s failOnEventSink) Close(bool) error { return nil }
+
+func TestRelayBedrockStream_BrokenPipeAfterDeltaIsCancel(t *testing.T) {
+	var buf bytes.Buffer
+	buf.Write(encodeFrame(t, map[string]string{
+		":event-type":   "contentBlockDelta",
+		":message-type": "event",
+	}, []byte(`{"delta":{"text":"abcdefghijklmnop"}}`)))
+	_, out, _, streamErr, cancelled := relayBedrockStream(
+		context.Background(),
+		bytes.NewReader(buf.Bytes()),
+		failOnEventSink{event: "contentBlockDelta", err: errors.New("write tcp: broken pipe")},
+	)
+	if streamErr || !cancelled {
+		t.Fatalf("broken pipe: streamErr=%v cancelled=%v", streamErr, cancelled)
+	}
+	if out != 4 {
+		t.Fatalf("output tokens = %d, want 4", out)
+	}
+}
+
+func TestRelayBedrockStream_BrokenPipeAfterExceptionKeepsError(t *testing.T) {
+	var buf bytes.Buffer
+	buf.Write(encodeFrame(t, map[string]string{
+		":exception-type": "modelStreamErrorException",
+		":message-type":   "exception",
+	}, []byte(`{"message":"stream failed"}`)))
+	_, _, _, streamErr, cancelled := relayBedrockStream(
+		context.Background(),
+		bytes.NewReader(buf.Bytes()),
+		failOnEventSink{event: "error", err: errors.New("write tcp: broken pipe")},
+	)
+	if !streamErr || cancelled {
+		t.Fatalf("exception+pipe: streamErr=%v cancelled=%v", streamErr, cancelled)
 	}
 }

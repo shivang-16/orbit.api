@@ -25,6 +25,9 @@ func RecordUsage(ctx context.Context, billing billingService.Enqueuer, logTag st
 
 	status := "success"
 	errText := ""
+	// Cancelled streams return 200 with tokens already received.
+	// Provider failures return a non-2xx StatusCode (Cancelled is
+	// cleared in that case), so this stays the single billing switch.
 	if result.StatusCode < 200 || result.StatusCode >= 300 {
 		status = "error"
 		errText = truncate(errBody, 500)
