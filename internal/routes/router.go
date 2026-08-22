@@ -46,14 +46,15 @@ func New(
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
+	// CORS lives here so OPTIONS preflights are answered before Chi's
+	// method matcher. Inference routes are POST-only; a group-level
+	// cors.Handler never runs for OPTIONS and the mux returns 405.
+	// corsByPath still keeps dashboard cookie routes on the allowlist
+	// and opens API-key chat/completions/messages to any origin.
+	r.Use(corsByPath(cfg))
 	// No global request timeout here: the inference chat route can run for
 	// minutes when streaming a long completion, and needs its own, longer
 	// timeout instead of one shared with every other route. See v1.go.
-	//
-	// CORS is deliberately NOT set globally here: the Clerk-cookie dashboard
-	// routes and the Bearer/X-Api-Key inference routes need opposite CORS
-	// policies (strict allowlist + credentials vs. any origin, no
-	// credentials), so each gets its own cors.Handler in v1.go instead.
 
 	r.Get("/health", health.Check)
 	r.Get("/ready", health.Ready)
