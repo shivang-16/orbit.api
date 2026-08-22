@@ -57,7 +57,12 @@ func (c *Controller) Delete(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, err, "failed to delete api key")
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	// Soft-delete only: the row stays, status becomes inactive. 200 JSON
+	// (not 204) so the Next.js proxy can forward a body without throwing.
+	writeJSON(w, http.StatusOK, map[string]string{
+		"ok":      "true",
+		"message": "key removed successfully",
+	})
 }
 
 func writeServiceError(w http.ResponseWriter, err error, fallback string) {

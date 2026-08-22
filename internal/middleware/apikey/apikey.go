@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/shivang-16/orbit.api/internal/model"
 	apikeyRepository "github.com/shivang-16/orbit.api/internal/repositories/apikey"
 	apikeyService "github.com/shivang-16/orbit.api/internal/services/apikey"
 )
@@ -43,8 +44,11 @@ func (m *Middleware) Authenticate(next http.Handler) http.Handler {
 			writeError(w, http.StatusInternalServerError, "failed to validate api key")
 			return
 		}
-		if item == nil {
-			log.Printf("apikey: invalid api key path=%s", r.URL.Path)
+		// GetActiveByHash already requires status=active, revoked_at IS NULL,
+		// and a non-expired key. Re-check status here so an inactive key can
+		// never authenticate even if the query is later loosened.
+		if item == nil || item.Status != model.APIKeyStatusActive {
+			log.Printf("apikey: invalid or inactive api key path=%s", r.URL.Path)
 			writeError(w, http.StatusUnauthorized, "invalid api key")
 			return
 		}

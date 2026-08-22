@@ -121,7 +121,7 @@ func (r *Repository) Deactivate(ctx context.Context, id, organizationID string) 
 	res, err := r.db.ExecContext(
 		ctx,
 		`UPDATE api_keys
-		 SET status = $1, revoked_at = now()
+		 SET status = $1, revoked_at = now(), updated_at = now()
 		 WHERE id = $2
 		   AND organization_id = $3
 		   AND status = $4`,
