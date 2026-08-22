@@ -297,6 +297,7 @@ type UsageDailyRow struct {
 	ModelName    string
 	InputTokens  int64
 	OutputTokens int64
+	CostMicros   int64
 }
 
 type UsageRequestRow struct {
@@ -334,9 +335,11 @@ func (r *Repository) ListUsageDaily(ctx context.Context, organizationID string, 
 		        COALESCE(mc.id::text, ''),
 		        COALESCE(NULLIF(mc.name, ''), 'Unknown'),
 		        COALESCE(SUM(ir.input_tokens), 0),
-		        COALESCE(SUM(ir.output_tokens), 0)
+		        COALESCE(SUM(ir.output_tokens), 0),
+		        COALESCE(SUM(cl.amount_micros), 0)
 		 FROM inference_requests ir
 		 LEFT JOIN model_catalogue mc ON mc.id = ir.model_catalogue_id
+		 LEFT JOIN credit_ledger cl ON cl.inference_request_id = ir.id AND cl.entry_type = 'usage'
 		 WHERE ir.organization_id = $1
 		   AND ir.created_at >= $2
 		   AND ir.created_at < $3
@@ -355,7 +358,7 @@ func (r *Repository) ListUsageDaily(ctx context.Context, organizationID string, 
 	out := make([]UsageDailyRow, 0)
 	for rows.Next() {
 		var row UsageDailyRow
-		if err := rows.Scan(&row.Day, &row.ModelID, &row.ModelName, &row.InputTokens, &row.OutputTokens); err != nil {
+		if err := rows.Scan(&row.Day, &row.ModelID, &row.ModelName, &row.InputTokens, &row.OutputTokens, &row.CostMicros); err != nil {
 			return nil, err
 		}
 		out = append(out, row)

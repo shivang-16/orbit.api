@@ -130,6 +130,7 @@ func (s *Service) GetUsage(ctx context.Context, organizationID, preset, pageRaw,
 			InputTokens:  row.InputTokens,
 			OutputTokens: row.OutputTokens,
 			TotalTokens:  total,
+			CostMicros:   row.CostMicros,
 		})
 	}
 
