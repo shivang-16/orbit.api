@@ -15,6 +15,7 @@ import (
 	creditsController "github.com/shivang-16/orbit.api/internal/controller/credits"
 	healthController "github.com/shivang-16/orbit.api/internal/controller/health"
 	inferenceController "github.com/shivang-16/orbit.api/internal/controller/inference"
+	invoicesController "github.com/shivang-16/orbit.api/internal/controller/invoices"
 	organizationController "github.com/shivang-16/orbit.api/internal/controller/organization"
 	planController "github.com/shivang-16/orbit.api/internal/controller/plan"
 	userController "github.com/shivang-16/orbit.api/internal/controller/user"
@@ -37,6 +38,7 @@ func registerV1(
 	plans *planController.Controller,
 	checkout *checkoutController.Controller,
 	credits *creditsController.Controller,
+	invoices *invoicesController.Controller,
 	webhooks *webhookController.Controller,
 	apiKeyAuth *apikeyMiddleware.Middleware,
 ) {
@@ -68,6 +70,8 @@ func registerV1(
 			r.Post("/billing/checkout", checkout.Create)
 			r.Get("/billing/credits", credits.GetOrganizationCredits)
 			r.Get("/billing/credits/history", credits.ListOrganizationCreditHistory)
+			r.Get("/billing/invoices", invoices.List)
+			r.Get("/billing/invoices/{paymentId}/pdf", invoices.PDF)
 			r.Get("/usage", credits.GetUsage)
 		})
 	})

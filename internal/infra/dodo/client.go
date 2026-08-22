@@ -54,43 +54,68 @@ type CheckoutSession struct {
 }
 
 func (c *Client) CreateCheckoutSession(ctx context.Context, params CreateCheckoutSessionParams) (*CheckoutSession, error) {
-	if c.apiKey == "" {
-		return nil, fmt.Errorf("DODO_PAYMENTS_API_KEY is required")
-	}
-
-	body, err := json.Marshal(params)
-	if err != nil {
-		return nil, fmt.Errorf("encode checkout params: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/checkouts", bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("build checkout request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("call dodo checkout: %w", err)
-	}
-	defer resp.Body.Close()
-
-	raw, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read dodo response: %w", err)
-	}
-
-	if resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("dodo checkout failed (%d): %s", resp.StatusCode, string(raw))
-	}
-
 	var session CheckoutSession
-	if err := json.Unmarshal(raw, &session); err != nil {
-		return nil, fmt.Errorf("decode dodo response: %w", err)
+	if err := c.doJSON(ctx, http.MethodPost, "/checkouts", params, &session); err != nil {
+		return nil, err
 	}
 	if session.CheckoutURL == "" {
 		return nil, fmt.Errorf("dodo did not return a checkout url")
 	}
 	return &session, nil
+}
+
+func (c *Client) doJSON(ctx context.Context, method, path string, body any, out any) error {
+	raw, _, err := c.do(ctx, method, path, body, "application/json")
+	if err != nil {
+		return err
+	}
+	if out == nil {
+		return nil
+	}
+	if err := json.Unmarshal(raw, out); err != nil {
+		return fmt.Errorf("decode dodo response: %w", err)
+	}
+	return nil
+}
+
+func (c *Client) do(ctx context.Context, method, path string, body any, accept string) ([]byte, string, error) {
+	if c.apiKey == "" {
+		return nil, "", fmt.Errorf("DODO_PAYMENTS_API_KEY is required")
+	}
+
+	var reader io.Reader
+	if body != nil {
+		encoded, err := json.Marshal(body)
+		if err != nil {
+			return nil, "", fmt.Errorf("encode dodo request: %w", err)
+		}
+		reader = bytes.NewReader(encoded)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, reader)
+	if err != nil {
+		return nil, "", fmt.Errorf("build dodo request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	if accept != "" {
+		req.Header.Set("Accept", accept)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, "", fmt.Errorf("call dodo: %w", err)
+	}
+	defer resp.Body.Close()
+
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, "", fmt.Errorf("read dodo response: %w", err)
+	}
+	if resp.StatusCode >= 300 {
+		return nil, "", fmt.Errorf("dodo request failed (%d): %s", resp.StatusCode, string(raw))
+	}
+	return raw, resp.Header.Get("Content-Type"), nil
 }

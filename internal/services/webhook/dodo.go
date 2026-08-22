@@ -10,24 +10,30 @@ import (
 	"strings"
 	"time"
 
+	"github.com/shivang-16/orbit.api/internal/infra/dodo"
 	"github.com/shivang-16/orbit.api/internal/model"
 	billingRepository "github.com/shivang-16/orbit.api/internal/repositories/billing"
+	invoiceRepository "github.com/shivang-16/orbit.api/internal/repositories/invoice"
 	organizationRepository "github.com/shivang-16/orbit.api/internal/repositories/organization"
 	planRepository "github.com/shivang-16/orbit.api/internal/repositories/plan"
 )
 
 type DodoService struct {
-	billing *billingRepository.Repository
-	plans   *planRepository.Repository
-	orgs    *organizationRepository.Repository
+	billing  *billingRepository.Repository
+	invoices *invoiceRepository.Repository
+	dodo     *dodo.Client
+	plans    *planRepository.Repository
+	orgs     *organizationRepository.Repository
 }
 
 func NewDodoService(
 	billing *billingRepository.Repository,
+	invoices *invoiceRepository.Repository,
+	dodoClient *dodo.Client,
 	plans *planRepository.Repository,
 	orgs *organizationRepository.Repository,
 ) *DodoService {
-	return &DodoService{billing: billing, plans: plans, orgs: orgs}
+	return &DodoService{billing: billing, invoices: invoices, dodo: dodoClient, plans: plans, orgs: orgs}
 }
 
 type dodoEvent struct {
@@ -41,6 +47,12 @@ type dodoObject struct {
 	SubscriptionID string          `json:"subscription_id"`
 	ID             string          `json:"id"`
 	ProductID      string          `json:"product_id"`
+	InvoiceID      string          `json:"invoice_id"`
+	TotalAmount    int             `json:"total_amount"`
+	Currency       string          `json:"currency"`
+	Status         string          `json:"status"`
+	RefundStatus   string          `json:"refund_status"`
+	CreatedAt      time.Time       `json:"created_at"`
 	Metadata       json.RawMessage `json:"metadata"`
 	Customer       *dodoCustomer   `json:"customer"`
 	Items          []dodoItem      `json:"items"`
@@ -78,6 +90,8 @@ func (s *DodoService) HandleEvent(ctx context.Context, rawBody []byte) error {
 		return s.handleSubscriptionGrant(ctx, eventType, payload)
 	case "payment.succeeded":
 		return s.handlePaymentSucceeded(ctx, payload)
+	case "refund.succeeded":
+		return s.handleRefundSucceeded(ctx, payload)
 	default:
 		log.Printf("dodo webhook: ignoring event type %q", eventType)
 		return nil
@@ -139,18 +153,23 @@ func (s *DodoService) handlePaymentSucceeded(ctx context.Context, raw json.RawMe
 	if err != nil {
 		return err
 	}
-	if firstNonEmpty(obj.SubscriptionID) != "" {
-		log.Printf("dodo webhook: payment.succeeded is a subscription charge — skipping (handled by subscription events)")
-		return nil
-	}
 
 	orgID, planSlug, creditsMicros, err := s.resolveGrant(ctx, obj)
 	if err != nil {
 		return err
 	}
-	if orgID == "" || creditsMicros <= 0 {
-		log.Printf("dodo webhook: payment.succeeded missing organization/credits — skipping")
+
+	if firstNonEmpty(obj.SubscriptionID) != "" {
+		if err := s.recordInvoice(ctx, orgID, planSlug, obj); err != nil {
+			return err
+		}
+		log.Printf("dodo webhook: payment.succeeded is a subscription charge — invoice saved, credits handled by subscription events")
 		return nil
+	}
+
+	if orgID == "" || creditsMicros <= 0 {
+		log.Printf("dodo webhook: payment.succeeded missing organization/credits — skipping grant")
+		return s.recordInvoice(ctx, orgID, planSlug, obj)
 	}
 
 	paymentID := firstNonEmpty(obj.PaymentID, obj.ID)
@@ -172,11 +191,103 @@ func (s *DodoService) handlePaymentSucceeded(ctx context.Context, raw json.RawMe
 		return fmt.Errorf("grant credits: %w", err)
 	}
 
-	if err := s.attachPlan(ctx, orgID, planSlug); err != nil {
-		return err
+	// Invoice persist is independent of attachPlan. Credits already landed;
+	// a missing invoice is worse than a delayed plan slug. Both errors still
+	// fail the webhook so Dodo retries — grant and upsert are idempotent.
+	invoiceErr := s.recordInvoice(ctx, orgID, planSlug, obj)
+	attachErr := s.attachPlan(ctx, orgID, planSlug)
+	if invoiceErr == nil && attachErr == nil {
+		log.Printf("dodo webhook: payment.succeeded granted %d micros to org %s (plan=%s, payment=%s)", creditsMicros, orgID, planSlug, paymentID)
+		return nil
+	}
+	if invoiceErr != nil && attachErr != nil {
+		return fmt.Errorf("%w (also attach plan: %v)", invoiceErr, attachErr)
+	}
+	if invoiceErr != nil {
+		return invoiceErr
+	}
+	return attachErr
+}
+
+func (s *DodoService) handleRefundSucceeded(ctx context.Context, raw json.RawMessage) error {
+	if s.invoices == nil {
+		return nil
 	}
 
-	log.Printf("dodo webhook: payment.succeeded granted %d micros to org %s (plan=%s, payment=%s)", creditsMicros, orgID, planSlug, paymentID)
+	var refund struct {
+		PaymentID  string `json:"payment_id"`
+		IsPartial  bool   `json:"is_partial"`
+		RefundType string `json:"refund_type"`
+	}
+	if err := json.Unmarshal(raw, &refund); err != nil {
+		return fmt.Errorf("decode refund payload: %w", err)
+	}
+
+	paymentID := strings.TrimSpace(refund.PaymentID)
+	if paymentID == "" {
+		log.Printf("dodo webhook: refund.succeeded missing payment_id — skipping")
+		return nil
+	}
+
+	refundStatus := normalizeRefundStatus("", refund.IsPartial || strings.EqualFold(refund.RefundType, "partial"))
+
+	var payment *dodo.Payment
+	if s.dodo != nil {
+		fetched, err := s.dodo.GetPayment(ctx, paymentID)
+		if err != nil {
+			log.Printf("dodo webhook: refund enrich payment %s: %v", paymentID, err)
+		} else {
+			payment = fetched
+			if payment != nil {
+				// GetPayment can lag the webhook. A stale "partial" must not
+				// overwrite a full refund from this event; full always wins.
+				refundStatus = mergeRefundStatus(refundStatus, payment.RefundStatus)
+			}
+		}
+	}
+
+	existing, err := s.invoices.GetByPayment(ctx, paymentID)
+	if err != nil {
+		return err
+	}
+	if existing != nil {
+		if existing.RefundStatus == "full" {
+			return nil
+		}
+		if _, err := s.invoices.UpdateRefundStatus(ctx, paymentID, refundStatus); err != nil {
+			return err
+		}
+		log.Printf("dodo webhook: refund.succeeded payment=%s status=%s", paymentID, refundStatus)
+		return nil
+	}
+
+	if payment == nil {
+		return fmt.Errorf("invoice not found for refunded payment %s", paymentID)
+	}
+
+	metaBytes, _ := json.Marshal(payment.Metadata)
+	obj := dodoObject{
+		PaymentID:      firstNonEmpty(payment.PaymentID, paymentID),
+		InvoiceID:      payment.InvoiceID,
+		TotalAmount:    payment.TotalAmount,
+		Currency:       payment.Currency,
+		Status:         firstNonEmpty(payment.Status, "succeeded"),
+		RefundStatus:   refundStatus,
+		SubscriptionID: payment.SubscriptionID,
+		CreatedAt:      payment.CreatedAt,
+		Metadata:       metaBytes,
+	}
+	orgID, planSlug, _, resolveErr := s.resolveGrant(ctx, obj)
+	if resolveErr != nil {
+		return resolveErr
+	}
+	if orgID == "" {
+		return fmt.Errorf("invoice not found for refunded payment %s", paymentID)
+	}
+	if err := s.recordInvoice(ctx, orgID, planSlug, obj); err != nil {
+		return err
+	}
+	log.Printf("dodo webhook: refund.succeeded created invoice payment=%s status=%s", paymentID, refundStatus)
 	return nil
 }
 
@@ -254,6 +365,79 @@ func (s *DodoService) resolvePlan(ctx context.Context, meta map[string]string, o
 	return nil, nil
 }
 
+func (s *DodoService) recordInvoice(ctx context.Context, orgID, planSlug string, obj dodoObject) error {
+	if s.invoices == nil {
+		return nil
+	}
+	paymentID := firstNonEmpty(obj.PaymentID, obj.ID)
+	if orgID == "" || paymentID == "" {
+		log.Printf("dodo webhook: skip invoice persist org=%q payment=%q", orgID, paymentID)
+		return nil
+	}
+
+	invoiceID := strings.TrimSpace(obj.InvoiceID)
+	amount := obj.TotalAmount
+	currency := strings.TrimSpace(obj.Currency)
+	status := firstNonEmpty(obj.Status, "succeeded")
+	refundStatus := strings.TrimSpace(obj.RefundStatus)
+	subscriptionID := firstNonEmpty(obj.SubscriptionID)
+	paidAt := obj.CreatedAt
+
+	if amount <= 0 || invoiceID == "" || currency == "" {
+		if s.dodo == nil {
+			return fmt.Errorf("payment %s missing amount/invoice fields and no dodo client", paymentID)
+		}
+		payment, err := s.dodo.GetPayment(ctx, paymentID)
+		if err != nil {
+			return fmt.Errorf("enrich payment %s: %w", paymentID, err)
+		}
+		if payment == nil {
+			return fmt.Errorf("enrich payment %s: empty response", paymentID)
+		}
+		if invoiceID == "" {
+			invoiceID = strings.TrimSpace(payment.InvoiceID)
+		}
+		if amount <= 0 {
+			amount = payment.TotalAmount
+		}
+		if currency == "" {
+			currency = payment.Currency
+		}
+		if refundStatus == "" {
+			refundStatus = payment.RefundStatus
+		}
+		if subscriptionID == "" {
+			subscriptionID = payment.SubscriptionID
+		}
+		if paidAt.IsZero() && !payment.CreatedAt.IsZero() {
+			paidAt = payment.CreatedAt
+		}
+		if payment.Status != "" {
+			status = payment.Status
+		}
+	}
+	if amount <= 0 {
+		return fmt.Errorf("payment %s has no amount after enrich", paymentID)
+	}
+
+	if err := s.invoices.Upsert(ctx, invoiceRepository.UpsertParams{
+		OrganizationID: orgID,
+		PaymentID:      paymentID,
+		InvoiceID:      invoiceID,
+		PlanSlug:       planSlug,
+		Amount:         amount,
+		Currency:       currency,
+		Status:         status,
+		RefundStatus:   refundStatus,
+		SubscriptionID: subscriptionID,
+		PaidAt:         paidAt,
+	}); err != nil {
+		return fmt.Errorf("save invoice: %w", err)
+	}
+	log.Printf("dodo webhook: saved invoice payment=%s org=%s amount=%d %s", paymentID, orgID, amount, currency)
+	return nil
+}
+
 func (s *DodoService) attachPlan(ctx context.Context, orgID, planSlug string) error {
 	if s.orgs == nil || orgID == "" || planSlug == "" {
 		return nil
@@ -309,6 +493,40 @@ func parseInt64(value string) int64 {
 		return 0
 	}
 	return n
+}
+
+func knownRefundStatus(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "full", "refunded":
+		return "full"
+	case "partial", "partially_refunded":
+		return "partial"
+	default:
+		return ""
+	}
+}
+
+func normalizeRefundStatus(value string, isPartial bool) string {
+	if known := knownRefundStatus(value); known != "" {
+		return known
+	}
+	if isPartial {
+		return "partial"
+	}
+	return "full"
+}
+
+func mergeRefundStatus(webhookStatus, paymentStatus string) string {
+	if webhookStatus == "full" || knownRefundStatus(paymentStatus) == "full" {
+		return "full"
+	}
+	if webhookStatus == "partial" || knownRefundStatus(paymentStatus) == "partial" {
+		return "partial"
+	}
+	if webhookStatus != "" {
+		return webhookStatus
+	}
+	return "full"
 }
 
 func firstNonEmpty(values ...string) string {

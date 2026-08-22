@@ -16,6 +16,7 @@ import (
 	creditsController "github.com/shivang-16/orbit.api/internal/controller/credits"
 	healthController "github.com/shivang-16/orbit.api/internal/controller/health"
 	inferenceController "github.com/shivang-16/orbit.api/internal/controller/inference"
+	invoicesController "github.com/shivang-16/orbit.api/internal/controller/invoices"
 	organizationController "github.com/shivang-16/orbit.api/internal/controller/organization"
 	planController "github.com/shivang-16/orbit.api/internal/controller/plan"
 	userController "github.com/shivang-16/orbit.api/internal/controller/user"
@@ -36,6 +37,7 @@ func New(
 	plans *planController.Controller,
 	checkout *checkoutController.Controller,
 	credits *creditsController.Controller,
+	invoices *invoicesController.Controller,
 	webhooks *webhookController.Controller,
 	apiKeyAuth *apikeyMiddleware.Middleware,
 ) http.Handler {
@@ -61,7 +63,7 @@ func New(
 	r.Get("/ready", health.Ready)
 
 	r.Route("/api/v1", func(r chi.Router) {
-		registerV1(r, cfg, health, users, catalogue, apiKeys, orgs, inference, openaiCompat, anthropicCompat, plans, checkout, credits, webhooks, apiKeyAuth)
+		registerV1(r, cfg, health, users, catalogue, apiKeys, orgs, inference, openaiCompat, anthropicCompat, plans, checkout, credits, invoices, webhooks, apiKeyAuth)
 	})
 
 	return r
