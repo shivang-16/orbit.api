@@ -6,8 +6,8 @@ package shared
 
 import (
 	"context"
-	"log"
 
+	"github.com/shivang-16/orbit.api/internal/logger"
 	apikeyMiddleware "github.com/shivang-16/orbit.api/internal/middleware/apikey"
 	billingService "github.com/shivang-16/orbit.api/internal/services/billing"
 	inferenceService "github.com/shivang-16/orbit.api/internal/services/inference"
@@ -27,17 +27,35 @@ func RecordUsage(ctx context.Context, billing billingService.Enqueuer, logTag st
 	if result.StatusCode < 200 || result.StatusCode >= 300 {
 		status = "error"
 		errText = truncate(errBody, 500)
-		log.Printf("%s provider error org=%s model=%s status=%d streamed=%t: %s", logTag, orgID, result.ModelCatalogueID, result.StatusCode, result.Streamed, errText)
+		logger.Error(ctx, "inference provider error",
+			"source", logTag,
+			"org_id", orgID,
+			"model", result.ModelCatalogueID,
+			"status", result.StatusCode,
+			"streamed", result.Streamed,
+			"error", errText,
+		)
 	}
 
 	if billing == nil {
-		log.Printf("%s: billing enqueuer is nil — usage not recorded org=%s model=%s", logTag, orgID, result.ModelCatalogueID)
+		logger.Error(ctx, "inference: billing enqueuer is nil — usage not recorded",
+			"source", logTag,
+			"org_id", orgID,
+			"model", result.ModelCatalogueID,
+		)
 		return
 	}
 
-	log.Printf(
-		"%s: enqueue billing org=%s key=%s model=%s in=%d out=%d latency_ms=%d status=%s hold=%s",
-		logTag, orgID, apiKeyID, result.ModelCatalogueID, result.InputTokens, result.OutputTokens, result.LatencyMS, status, result.HoldID,
+	logger.Info(ctx, "inference: enqueue billing",
+		"source", logTag,
+		"org_id", orgID,
+		"api_key_id", apiKeyID,
+		"model", result.ModelCatalogueID,
+		"input_tokens", result.InputTokens,
+		"output_tokens", result.OutputTokens,
+		"latency_ms", result.LatencyMS,
+		"status", status,
+		"hold_id", result.HoldID,
 	)
 
 	billing.Enqueue(billingService.Job{

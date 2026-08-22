@@ -6,13 +6,14 @@
 package openai
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
-	"log"
 	"net/http"
 
 	sharedController "github.com/shivang-16/orbit.api/internal/controller/shared"
 	"github.com/shivang-16/orbit.api/internal/limiter"
+	"github.com/shivang-16/orbit.api/internal/logger"
 	catalogueRepository "github.com/shivang-16/orbit.api/internal/repositories/catalogue"
 	billingService "github.com/shivang-16/orbit.api/internal/services/billing"
 	openaiCompat "github.com/shivang-16/orbit.api/internal/services/compat/openai"
@@ -48,14 +49,14 @@ func (c *Controller) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	result, err := c.service.Converse(r.Context(), req.Model, req.ToConverse(), w, sink)
 	if err != nil {
-		c.writeServiceError(w, req.Model, err)
+		c.writeServiceError(r.Context(), w, req.Model, err)
 		return
 	}
 
 	if !result.Streamed {
 		if result.StatusCode != http.StatusOK {
 			openaiCompat.WriteError(w, mapUpstreamStatus(result.StatusCode), "api_error", inferenceService.BedrockErrorMessage(result.Body))
-		} else if body, ok := c.formatBufferedResponse(w, req.Model, result); ok {
+		} else if body, ok := c.formatBufferedResponse(r.Context(), w, req.Model, result); ok {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write(body)
@@ -69,10 +70,10 @@ func (c *Controller) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	sharedController.RecordUsage(r.Context(), c.billing, "openai/chat.completions", result, req.Prompt(), errBody)
 }
 
-func (c *Controller) formatBufferedResponse(w http.ResponseWriter, requestedModel string, result *inferenceService.ChatResult) ([]byte, bool) {
+func (c *Controller) formatBufferedResponse(ctx context.Context, w http.ResponseWriter, requestedModel string, result *inferenceService.ChatResult) ([]byte, bool) {
 	parsed, err := inferenceService.ParseConverseResponse(result.Body)
 	if err != nil {
-		log.Printf("openai/chat.completions: parse bedrock response: %v", err)
+		logger.Error(ctx, "openai/chat.completions: parse bedrock response", "error", err)
 		openaiCompat.WriteError(w, http.StatusBadGateway, "api_error", "failed to parse model response")
 		return nil, false
 	}
@@ -82,7 +83,7 @@ func (c *Controller) formatBufferedResponse(w http.ResponseWriter, requestedMode
 	}
 	body, err := openaiCompat.NewChatCompletionResponse(modelName, parsed)
 	if err != nil {
-		log.Printf("openai/chat.completions: encode response: %v", err)
+		logger.Error(ctx, "openai/chat.completions: encode response", "error", err)
 		openaiCompat.WriteError(w, http.StatusInternalServerError, "api_error", "failed to encode response")
 		return nil, false
 	}
@@ -92,7 +93,7 @@ func (c *Controller) formatBufferedResponse(w http.ResponseWriter, requestedMode
 func (c *Controller) ListModels(w http.ResponseWriter, r *http.Request) {
 	models, err := c.catalogue.ListActive(r.Context(), "")
 	if err != nil {
-		log.Printf("openai/models: list: %v", err)
+		logger.Error(r.Context(), "openai/models: list failed", "error", err)
 		openaiCompat.WriteError(w, http.StatusInternalServerError, "api_error", "failed to list models")
 		return
 	}
@@ -101,8 +102,8 @@ func (c *Controller) ListModels(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(openaiCompat.NewModelListResponse(models))
 }
 
-func (c *Controller) writeServiceError(w http.ResponseWriter, modelID string, err error) {
-	log.Printf("openai/chat.completions failed model=%s: %v", modelID, err)
+func (c *Controller) writeServiceError(ctx context.Context, w http.ResponseWriter, modelID string, err error) {
+	logger.Error(ctx, "openai/chat.completions failed", "model", modelID, "error", err)
 	if limiter.SetHeadersFromError(w, err) {
 		openaiCompat.WriteError(w, http.StatusTooManyRequests, "rate_limit_exceeded", "rate limit exceeded")
 		return

@@ -6,10 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"time"
 
+	"github.com/shivang-16/orbit.api/internal/logger"
 	"github.com/shivang-16/orbit.api/internal/model"
 )
 
@@ -18,7 +18,11 @@ func (s *Service) callMantle(ctx context.Context, entry *model.ModelCatalogue, r
 	if err != nil {
 		return nil, fmt.Errorf("encode mantle request: %w", err)
 	}
-	log.Printf("inference: mantle responses model=%s slug=%s stream=%t", mantleModelID(entry.ModelID), entry.Slug, req.Stream)
+	logger.Info(ctx, "inference: mantle responses",
+		"model", mantleModelID(entry.ModelID),
+		"slug", entry.Slug,
+		"stream", req.Stream,
+	)
 	if req.Stream {
 		if sink == nil {
 			flusher, _ := w.(http.Flusher)
@@ -68,7 +72,7 @@ func (s *Service) mantleOnce(ctx context.Context, entry *model.ModelCatalogue, p
 
 	converseBody, inputTokens, outputTokens, err := responsesToConverseJSON(body, latencyMS)
 	if err != nil {
-		log.Printf("inference: parse mantle response slug=%s: %v", entry.Slug, err)
+		logger.Error(ctx, "inference: parse mantle response", "slug", entry.Slug, "error", err)
 		var failed *responsesStatusError
 		if errors.As(err, &failed) {
 			inputTokens = failed.InputTokens
@@ -131,7 +135,7 @@ func (s *Service) mantleStream(ctx context.Context, entry *model.ModelCatalogue,
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
 
-	inputTokens, outputTokens, streamErr := relayResponsesStream(resp.Body, sink)
+	inputTokens, outputTokens, streamErr := relayResponsesStream(ctx, resp.Body, sink)
 	latencyMS := int(time.Since(started).Milliseconds())
 
 	status := http.StatusOK

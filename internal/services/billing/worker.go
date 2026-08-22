@@ -2,9 +2,9 @@ package billing
 
 import (
 	"context"
-	"log"
 	"time"
 
+	"github.com/shivang-16/orbit.api/internal/logger"
 	billingRepository "github.com/shivang-16/orbit.api/internal/repositories/billing"
 	pricingRepository "github.com/shivang-16/orbit.api/internal/repositories/pricing"
 )
@@ -29,6 +29,6 @@ func (w *Worker) process(job Job) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := w.processor.Process(ctx, job); err != nil {
-		log.Printf("billing: process: %v", err)
+		logger.Error(logger.SetTag(ctx, logger.TagBilling), "billing: process failed", "error", err)
 	}
 }

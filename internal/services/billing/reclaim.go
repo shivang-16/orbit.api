@@ -2,9 +2,9 @@ package billing
 
 import (
 	"context"
-	"log"
 	"time"
 
+	"github.com/shivang-16/orbit.api/internal/logger"
 	billingRepository "github.com/shivang-16/orbit.api/internal/repositories/billing"
 )
 
@@ -24,11 +24,11 @@ func StartHoldReclaimer(ctx context.Context, billing *billingRepository.Reposito
 				n, err := billing.ReleaseExpiredHolds(reclaimCtx)
 				cancel()
 				if err != nil {
-					log.Printf("billing: reclaim expired holds: %v", err)
+					logger.Error(logger.SetTag(reclaimCtx, logger.TagBilling), "billing: reclaim expired holds failed", "error", err)
 					continue
 				}
 				if n > 0 {
-					log.Printf("billing: reclaimed expired holds affecting %d org row(s)", n)
+					logger.Info(logger.SetTag(reclaimCtx, logger.TagBilling), "billing: reclaimed expired holds", "org_rows", n)
 				}
 			}
 		}

@@ -3,22 +3,24 @@ package inference
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
-	"log"
 	"sort"
 	"strings"
+
+	"github.com/shivang-16/orbit.api/internal/logger"
 )
 
 // relayResponsesStream reads OpenAI Responses SSE from Mantle and emits
 // the same ConverseStream frames the existing OpenAI/Anthropic/native
 // sinks already understand (messageStart, contentBlockDelta, ...).
-func relayResponsesStream(body io.Reader, sink StreamSink) (inputTokens, outputTokens int, streamErr bool) {
-	adapter := &responsesStreamAdapter{sink: sink}
+func relayResponsesStream(ctx context.Context, body io.Reader, sink StreamSink) (inputTokens, outputTokens int, streamErr bool) {
+	adapter := &responsesStreamAdapter{ctx: ctx, sink: sink}
 	err := scanSSE(body, adapter.handle)
 	if err != nil && !errors.Is(err, io.EOF) {
-		log.Printf("inference: decode mantle event-stream: %v", err)
+		logger.Error(ctx, "inference: decode mantle event-stream", "error", err)
 		streamErr = true
 	}
 	if adapter.failed {
@@ -29,6 +31,7 @@ func relayResponsesStream(body io.Reader, sink StreamSink) (inputTokens, outputT
 }
 
 type responsesStreamAdapter struct {
+	ctx          context.Context
 	sink         StreamSink
 	started      bool
 	nextBlock    int
@@ -177,7 +180,7 @@ func (a *responsesStreamAdapter) handle(event string, data []byte) error {
 		if envelope.Error != nil && envelope.Error.Message != "" {
 			msg = envelope.Error.Message
 		}
-		log.Printf("inference: mantle mid-stream error: %s", msg)
+		logger.Error(a.ctx, "inference: mantle mid-stream error", "error", msg)
 		return a.sink.HandleFrame("error", mustJSON(map[string]any{"message": msg}))
 	}
 	return nil

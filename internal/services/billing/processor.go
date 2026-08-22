@@ -3,8 +3,8 @@ package billing
 import (
 	"context"
 	"fmt"
-	"log"
 
+	"github.com/shivang-16/orbit.api/internal/logger"
 	billingRepository "github.com/shivang-16/orbit.api/internal/repositories/billing"
 	pricingRepository "github.com/shivang-16/orbit.api/internal/repositories/pricing"
 )
@@ -52,9 +52,16 @@ func (p *Processor) Process(ctx context.Context, job Job) error {
 	}); err != nil {
 		return fmt.Errorf("record billing: %w", err)
 	}
-	log.Printf(
-		"billing: recorded org=%s model=%s amount_micros=%d in=%d out=%d status=%s key=%s hold=%s",
-		job.OrganizationID, job.ModelCatalogueID, vendorAmount, job.InputTokens, job.OutputTokens, job.Status, job.IdempotencyKey, job.HoldID,
+	ctx = logger.SetTag(ctx, logger.TagBilling)
+	ctx = logger.SetOrg(ctx, job.OrganizationID)
+	logger.Info(ctx, "billing: recorded",
+		"model", job.ModelCatalogueID,
+		"amount_micros", vendorAmount,
+		"input_tokens", job.InputTokens,
+		"output_tokens", job.OutputTokens,
+		"status", job.Status,
+		"idempotency_key", job.IdempotencyKey,
+		"hold_id", job.HoldID,
 	)
 	return nil
 }

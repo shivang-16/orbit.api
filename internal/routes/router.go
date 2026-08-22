@@ -20,7 +20,9 @@ import (
 	planController "github.com/shivang-16/orbit.api/internal/controller/plan"
 	userController "github.com/shivang-16/orbit.api/internal/controller/user"
 	webhookController "github.com/shivang-16/orbit.api/internal/controller/webhook"
+	"github.com/shivang-16/orbit.api/internal/logger"
 	apikeyMiddleware "github.com/shivang-16/orbit.api/internal/middleware/apikey"
+	authMiddleware "github.com/shivang-16/orbit.api/internal/middleware/auth"
 )
 
 func New(
@@ -39,12 +41,13 @@ func New(
 	invoices *invoicesController.Controller,
 	webhooks *webhookController.Controller,
 	apiKeyAuth *apikeyMiddleware.Middleware,
+	clerkAuth *authMiddleware.Middleware,
 ) http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
-	r.Use(middleware.Logger)
+	r.Use(logger.HTTP)
 	r.Use(middleware.Recoverer)
 	// CORS lives here so OPTIONS preflights are answered before Chi's
 	// method matcher. Inference routes are POST-only; a group-level
@@ -60,7 +63,7 @@ func New(
 	r.Get("/ready", health.Ready)
 
 	r.Route("/api/v1", func(r chi.Router) {
-		registerV1(r, cfg, health, users, catalogue, apiKeys, orgs, inference, openaiCompat, anthropicCompat, plans, checkout, credits, invoices, webhooks, apiKeyAuth)
+		registerV1(r, cfg, health, users, catalogue, apiKeys, orgs, inference, openaiCompat, anthropicCompat, plans, checkout, credits, invoices, webhooks, apiKeyAuth, clerkAuth)
 	})
 
 	return r

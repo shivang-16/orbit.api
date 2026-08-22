@@ -21,6 +21,7 @@ type Config struct {
 	SQS              SQS
 	Dodo             Dodo
 	Resend           Resend
+	BetterStack      BetterStack
 	RateLimits       RateLimits
 	Credits          Credits
 	Server           Server
@@ -57,6 +58,11 @@ type Dodo struct {
 type Resend struct {
 	APIKey    string
 	FromEmail string
+}
+
+type BetterStack struct {
+	SourceToken   string
+	IngestingHost string
 }
 
 type AWS struct {
@@ -127,6 +133,10 @@ func Load() Config {
 		Resend: Resend{
 			APIKey:    env("RESEND_API_KEY", ""),
 			FromEmail: env("RESEND_FROM_EMAIL", "Shivang Yadav <hi@tryorbit.cloud>"),
+		},
+		BetterStack: BetterStack{
+			SourceToken:   env("BETTERSTACK_SOURCE_TOKEN", ""),
+			IngestingHost: env("BETTERSTACK_INGESTING_HOST", ""),
 		},
 		RateLimits: file.RateLimits,
 		Credits:    file.Credits,

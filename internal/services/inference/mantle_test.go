@@ -2,6 +2,7 @@ package inference
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -168,7 +169,7 @@ func TestRelayResponsesStream_TextAndUsage(t *testing.T) {
 		``,
 	}, "\n")
 	sink := &recordingSink{}
-	in, out, streamErr := relayResponsesStream(bytes.NewBufferString(sse), sink)
+	in, out, streamErr := relayResponsesStream(context.Background(), bytes.NewBufferString(sse), sink)
 	if streamErr {
 		t.Fatalf("streamErr = true")
 	}
@@ -206,7 +207,7 @@ func TestRelayResponsesStream_ToolCall(t *testing.T) {
 		``,
 	}, "\n")
 	sink := &recordingSink{}
-	_, _, streamErr := relayResponsesStream(bytes.NewBufferString(sse), sink)
+	_, _, streamErr := relayResponsesStream(context.Background(), bytes.NewBufferString(sse), sink)
 	if streamErr {
 		t.Fatalf("streamErr = true")
 	}

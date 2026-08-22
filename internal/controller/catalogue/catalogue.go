@@ -2,11 +2,12 @@ package catalogue
 
 import (
 	"encoding/json"
-	"log"
 	"net/http"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+
+	"github.com/shivang-16/orbit.api/internal/logger"
 
 	catalogueService "github.com/shivang-16/orbit.api/internal/services/catalogue"
 )
@@ -23,7 +24,7 @@ func (c *Controller) List(w http.ResponseWriter, r *http.Request) {
 	tag := strings.TrimSpace(r.URL.Query().Get("tag"))
 	resp, err := c.service.List(r.Context(), tag)
 	if err != nil {
-		log.Printf("catalogue/list tag=%q: %v", tag, err)
+		logger.Error(r.Context(), "catalogue/list failed", "tag", tag, "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list models"})
 		return
 	}
@@ -34,7 +35,7 @@ func (c *Controller) Get(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	resp, err := c.service.Get(r.Context(), id)
 	if err != nil {
-		log.Printf("catalogue/get id=%s: %v", id, err)
+		logger.Error(r.Context(), "catalogue/get failed", "id", id, "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to load model"})
 		return
 	}
@@ -48,7 +49,7 @@ func (c *Controller) Get(w http.ResponseWriter, r *http.Request) {
 func (c *Controller) Overview(w http.ResponseWriter, r *http.Request) {
 	resp, err := c.service.Overview(r.Context())
 	if err != nil {
-		log.Printf("catalogue/overview: %v", err)
+		logger.Error(r.Context(), "catalogue/overview failed", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to load overview"})
 		return
 	}

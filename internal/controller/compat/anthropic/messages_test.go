@@ -82,7 +82,7 @@ func newTestHarness(t *testing.T) *testHarness {
 	ctrl := anthropicController.NewController(svc, billingWorker)
 
 	r := chi.NewRouter()
-	r.Use(apikeyMiddleware.New(apiKeyRepo).Authenticate)
+	r.Use(apikeyMiddleware.New(apiKeyRepo, nil).Authenticate)
 	r.Post("/api/v1/messages", ctrl.Messages)
 
 	return &testHarness{db: db, router: r, secret: secret, keyID: keyID, slug: slug}

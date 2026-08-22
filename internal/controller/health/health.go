@@ -2,10 +2,10 @@ package health
 
 import (
 	"encoding/json"
-	"log"
 	"net/http"
 	"time"
 
+	"github.com/shivang-16/orbit.api/internal/logger"
 	healthService "github.com/shivang-16/orbit.api/internal/services/health"
 )
 
@@ -40,7 +40,7 @@ func (c *Controller) Check(w http.ResponseWriter, r *http.Request) {
 
 func (c *Controller) Ready(w http.ResponseWriter, r *http.Request) {
 	if err := c.service.Ready(r.Context()); err != nil {
-		log.Printf("health/ready: database ping failed: %v", err)
+		logger.Error(r.Context(), "health/ready: database ping failed", "error", err)
 		writeJSON(w, http.StatusServiceUnavailable, readyResponse{
 			Status:    "unavailable",
 			Service:   "orbit.api",

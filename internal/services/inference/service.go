@@ -23,13 +23,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"time"
 
 	"github.com/shivang-16/orbit.api/internal/config"
 	"github.com/shivang-16/orbit.api/internal/limiter"
+	"github.com/shivang-16/orbit.api/internal/logger"
 	apikeyMiddleware "github.com/shivang-16/orbit.api/internal/middleware/apikey"
 	authMiddleware "github.com/shivang-16/orbit.api/internal/middleware/auth"
 	"github.com/shivang-16/orbit.api/internal/model"
@@ -267,7 +267,7 @@ func (s *Service) chatStream(ctx context.Context, entry *model.ModelCatalogue, p
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
 
-	inputTokens, outputTokens, latencyMS, streamErr := relayBedrockStream(resp.Body, sink)
+	inputTokens, outputTokens, latencyMS, streamErr := relayBedrockStream(ctx, resp.Body, sink)
 	if latencyMS == 0 {
 		latencyMS = int(time.Since(started).Milliseconds())
 	}
@@ -297,7 +297,7 @@ func (s *Service) chatStream(ctx context.Context, entry *model.ModelCatalogue, p
 // final token usage (for billing), and a message-type of "exception"
 // signals a stream failure that Bedrock can raise after the 200 has
 // already gone out.
-func relayBedrockStream(body io.Reader, sink StreamSink) (inputTokens, outputTokens, latencyMS int, streamErr bool) {
+func relayBedrockStream(ctx context.Context, body io.Reader, sink StreamSink) (inputTokens, outputTokens, latencyMS int, streamErr bool) {
 	reader := bufio.NewReaderSize(body, 64*1024)
 
 	for {
@@ -307,7 +307,7 @@ func relayBedrockStream(body io.Reader, sink StreamSink) (inputTokens, outputTok
 				_ = sink.Close(streamErr)
 				return inputTokens, outputTokens, latencyMS, streamErr
 			}
-			log.Printf("inference: decode bedrock event-stream: %v", err)
+			logger.Error(ctx, "inference: decode bedrock event-stream", "error", err)
 			_ = sink.Close(true)
 			return inputTokens, outputTokens, latencyMS, true
 		}
@@ -315,7 +315,10 @@ func relayBedrockStream(body io.Reader, sink StreamSink) (inputTokens, outputTok
 		eventType := frame.headers[":event-type"]
 		if frame.headers[":message-type"] == "exception" {
 			eventType = "error"
-			log.Printf("inference: bedrock mid-stream exception type=%s payload=%s", frame.headers[":exception-type"], frame.payload)
+			logger.Error(ctx, "inference: bedrock mid-stream exception",
+				"exception_type", frame.headers[":exception-type"],
+				"payload", string(frame.payload),
+			)
 			streamErr = true
 		}
 		if eventType == "" {
@@ -381,7 +384,11 @@ func (s *Service) placeHold(ctx context.Context, catalogueID string, inputTokens
 	if hold == nil || hold.ID == "" || hold.MaxTokens < 1 {
 		return nil, ErrLowCredits
 	}
-	log.Printf("inference: org=%s hold=%s amount_micros=%d max_tokens=%d", orgID, hold.ID, hold.AmountMicros, hold.MaxTokens)
+	logger.Info(ctx, "inference: credit hold placed",
+		"hold_id", hold.ID,
+		"amount_micros", hold.AmountMicros,
+		"max_tokens", hold.MaxTokens,
+	)
 	return hold, nil
 }
 
@@ -391,7 +398,7 @@ func (s *Service) releaseHold(ctx context.Context, holdID string) {
 	}
 	releaseCtx := context.WithoutCancel(ctx)
 	if err := s.reserver.Release(releaseCtx, holdID); err != nil {
-		log.Printf("inference: release hold=%s: %v", holdID, err)
+		logger.Error(releaseCtx, "inference: release hold failed", "hold_id", holdID, "error", err)
 	}
 }
 

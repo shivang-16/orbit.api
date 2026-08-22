@@ -2,7 +2,6 @@ package httpserver
 
 import (
 	"context"
-	"log"
 	"net/http"
 
 	"github.com/shivang-16/orbit.api/internal/config"
@@ -24,7 +23,9 @@ import (
 	"github.com/shivang-16/orbit.api/internal/infra/postgres"
 	"github.com/shivang-16/orbit.api/internal/infra/resend"
 	"github.com/shivang-16/orbit.api/internal/infra/sqs"
+	"github.com/shivang-16/orbit.api/internal/logger"
 	apikeyMiddleware "github.com/shivang-16/orbit.api/internal/middleware/apikey"
+	authMiddleware "github.com/shivang-16/orbit.api/internal/middleware/auth"
 	apikeyRepository "github.com/shivang-16/orbit.api/internal/repositories/apikey"
 	billingRepository "github.com/shivang-16/orbit.api/internal/repositories/billing"
 	catalogueRepository "github.com/shivang-16/orbit.api/internal/repositories/catalogue"
@@ -50,19 +51,20 @@ import (
 )
 
 func Start(ctx context.Context, cfg config.Config) {
+	logger.Init(cfg)
 	if cfg.ClerkSecretKey == "" {
-		log.Fatal("CLERK_SECRET_KEY is required")
+		logger.Fatal(ctx, "CLERK_SECRET_KEY is required")
 	}
 
 	db, err := postgres.OpenAndMigrate(cfg.Postgres, "migrations")
 	if err != nil {
-		log.Fatalf("postgres: %v", err)
+		logger.Fatal(ctx, "postgres open failed", "error", err)
 	}
 	defer db.Close()
 
 	sqsClient, err := sqs.New(context.Background(), cfg)
 	if err != nil {
-		log.Fatalf("sqs: %v", err)
+		logger.Fatal(ctx, "sqs init failed", "error", err)
 	}
 	billingPublisher := billingService.NewPublisher(sqsClient)
 
@@ -93,7 +95,8 @@ func Start(ctx context.Context, cfg config.Config) {
 	inferenceCtrl := inferenceController.NewController(inferenceSvc, billingEnqueuer, orgRepo)
 	openaiCompatCtrl := openaiController.NewController(inferenceSvc, catalogueRepo, billingEnqueuer)
 	anthropicCompatCtrl := anthropicController.NewController(inferenceSvc, billingEnqueuer)
-	apiKeyAuth := apikeyMiddleware.New(apiKeyRepo)
+	apiKeyAuth := apikeyMiddleware.New(apiKeyRepo, userRepo)
+	clerkAuth := authMiddleware.New(userRepo)
 
 	planRepo := planRepository.NewRepository(db.DB())
 	planSvc := planService.NewService(planRepo)
@@ -117,11 +120,11 @@ func Start(ctx context.Context, cfg config.Config) {
 
 	healthSvc := healthService.NewService(db)
 	healthCtrl := healthController.NewController(healthSvc)
-	handler := routes.New(cfg, healthCtrl, userCtrl, catalogueCtrl, apiKeyCtrl, orgCtrl, inferenceCtrl, openaiCompatCtrl, anthropicCompatCtrl, planCtrl, checkoutCtrl, creditsCtrl, invoicesCtrl, webhookCtrl, apiKeyAuth)
+	handler := routes.New(cfg, healthCtrl, userCtrl, catalogueCtrl, apiKeyCtrl, orgCtrl, inferenceCtrl, openaiCompatCtrl, anthropicCompatCtrl, planCtrl, checkoutCtrl, creditsCtrl, invoicesCtrl, webhookCtrl, apiKeyAuth, clerkAuth)
 
 	addr := ":" + cfg.Port
-	log.Printf("orbit.api http listening on %s (%s)", addr, cfg.Env)
+	logger.Info(ctx, "orbit.api http listening", "addr", addr)
 	if err := http.ListenAndServe(addr, handler); err != nil {
-		log.Fatal(err)
+		logger.Fatal(ctx, "http listen failed", "error", err)
 	}
 }

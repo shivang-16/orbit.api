@@ -2,10 +2,10 @@ package mail
 
 import (
 	"context"
-	"log"
 	"strings"
 
 	"github.com/shivang-16/orbit.api/internal/infra/resend"
+	"github.com/shivang-16/orbit.api/internal/logger"
 )
 
 type Service struct {
@@ -18,16 +18,18 @@ func NewService(client *resend.Client) *Service {
 
 func (s *Service) SendWelcome(ctx context.Context, to, _firstName string) {
 	to = strings.TrimSpace(to)
+	ctx = logger.SetTag(ctx, logger.TagMail)
+	ctx = logger.SetUser(ctx, logger.From(ctx).UserID, to)
 	if to == "" || !strings.Contains(to, "@") {
-		log.Printf("mail: skipping welcome email because recipient is invalid")
+		logger.Warn(ctx, "mail: skipping welcome email because recipient is invalid")
 		return
 	}
 	if s == nil || s.client == nil || !s.client.Enabled() {
-		log.Printf("mail: RESEND_API_KEY is not configured; skipping welcome email")
+		logger.Warn(ctx, "mail: RESEND_API_KEY is not configured; skipping welcome email")
 		return
 	}
 
-	log.Printf("mail: sending welcome email to=%s from=%s subject=%q", to, s.client.From(), welcomeEmailSubject)
+	logger.Info(ctx, "mail: sending welcome email", "from", s.client.From(), "subject", welcomeEmailSubject)
 
 	id, err := s.client.Send(ctx, resend.SendParams{
 		To:      to,
@@ -36,8 +38,8 @@ func (s *Service) SendWelcome(ctx context.Context, to, _firstName string) {
 		Text:    welcomeEmailText(),
 	})
 	if err != nil {
-		log.Printf("mail: welcome email failed to=%s from=%s: %v", to, s.client.From(), err)
+		logger.Error(ctx, "mail: welcome email failed", "from", s.client.From(), "error", err)
 		return
 	}
-	log.Printf("mail: welcome email sent to=%s from=%s email_id=%s", to, s.client.From(), id)
+	logger.Info(ctx, "mail: welcome email sent", "from", s.client.From(), "email_id", id)
 }

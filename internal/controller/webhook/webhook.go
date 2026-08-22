@@ -2,10 +2,10 @@ package webhook
 
 import (
 	"io"
-	"log"
 	"net/http"
 
 	"github.com/shivang-16/orbit.api/internal/infra/dodo"
+	"github.com/shivang-16/orbit.api/internal/logger"
 	webhookService "github.com/shivang-16/orbit.api/internal/services/webhook"
 )
 
@@ -23,7 +23,7 @@ func NewController(dodoWebhookKey string, dodoService *webhookService.DodoServic
 func (c *Controller) Dodo(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		log.Printf("dodo webhook: read body: %v", err)
+		logger.Error(r.Context(), "dodo webhook: read body", "error", err)
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
@@ -32,21 +32,21 @@ func (c *Controller) Dodo(w http.ResponseWriter, r *http.Request) {
 	webhookTimestamp := r.Header.Get("Webhook-Timestamp")
 	webhookSignature := r.Header.Get("Webhook-Signature")
 	if webhookID == "" || webhookTimestamp == "" || webhookSignature == "" {
-		log.Printf("dodo webhook: missing signature headers id=%q ts=%q sig=%t", webhookID, webhookTimestamp, webhookSignature != "")
+		logger.Warn(r.Context(), "dodo webhook: missing signature headers", "webhook_id", webhookID, "has_timestamp", webhookTimestamp != "", "has_signature", webhookSignature != "")
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
 	if c.dodoWebhookKey == "" {
-		log.Printf("dodo webhook: DODO_WEBHOOK_KEY not set — skipping signature verification")
+		logger.Warn(r.Context(), "dodo webhook: DODO_WEBHOOK_KEY not set — skipping signature verification")
 	} else if !dodo.VerifySignature(c.dodoWebhookKey, string(body), webhookID, webhookTimestamp, webhookSignature) {
-		log.Printf("dodo webhook: signature verification failed for %s", webhookID)
+		logger.Warn(r.Context(), "dodo webhook: signature verification failed", "webhook_id", webhookID)
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
 
 	if err := c.dodoService.HandleEvent(r.Context(), body); err != nil {
-		log.Printf("dodo webhook: handle event: %v", err)
+		logger.Error(r.Context(), "dodo webhook: handle event failed", "error", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}

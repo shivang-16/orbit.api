@@ -5,12 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/shivang-16/orbit.api/internal/infra/dodo"
+	"github.com/shivang-16/orbit.api/internal/logger"
 	"github.com/shivang-16/orbit.api/internal/model"
 	billingRepository "github.com/shivang-16/orbit.api/internal/repositories/billing"
 	invoiceRepository "github.com/shivang-16/orbit.api/internal/repositories/invoice"
@@ -93,7 +93,7 @@ func (s *DodoService) HandleEvent(ctx context.Context, rawBody []byte) error {
 	case "refund.succeeded":
 		return s.handleRefundSucceeded(ctx, payload)
 	default:
-		log.Printf("dodo webhook: ignoring event type %q", eventType)
+		logger.Infof(ctx, "dodo webhook: ignoring event type %q", eventType)
 		return nil
 	}
 }
@@ -113,7 +113,7 @@ func (s *DodoService) handleSubscriptionGrant(ctx context.Context, eventType str
 		return err
 	}
 	if orgID == "" || creditsMicros <= 0 {
-		log.Printf("dodo webhook: %s missing organization/credits org=%q credits=%d product=%q — skipping", eventType, orgID, creditsMicros, firstNonEmpty(obj.ProductID))
+		logger.Infof(ctx, "dodo webhook: %s missing organization/credits org=%q credits=%d product=%q — skipping", eventType, orgID, creditsMicros, firstNonEmpty(obj.ProductID))
 		return nil
 	}
 
@@ -142,7 +142,7 @@ func (s *DodoService) handleSubscriptionGrant(ctx context.Context, eventType str
 		return err
 	}
 
-	log.Printf("dodo webhook: %s granted %d micros to org %s (plan=%s, key=%s)", eventType, creditsMicros, orgID, planSlug, idempotencyKey)
+	logger.Infof(ctx, "dodo webhook: %s granted %d micros to org %s (plan=%s, key=%s)", eventType, creditsMicros, orgID, planSlug, idempotencyKey)
 	return nil
 }
 
@@ -163,12 +163,12 @@ func (s *DodoService) handlePaymentSucceeded(ctx context.Context, raw json.RawMe
 		if err := s.recordInvoice(ctx, orgID, planSlug, obj); err != nil {
 			return err
 		}
-		log.Printf("dodo webhook: payment.succeeded is a subscription charge — invoice saved, credits handled by subscription events")
+		logger.Infof(ctx, "dodo webhook: payment.succeeded is a subscription charge — invoice saved, credits handled by subscription events")
 		return nil
 	}
 
 	if orgID == "" || creditsMicros <= 0 {
-		log.Printf("dodo webhook: payment.succeeded missing organization/credits — skipping grant")
+		logger.Infof(ctx, "dodo webhook: payment.succeeded missing organization/credits — skipping grant")
 		return s.recordInvoice(ctx, orgID, planSlug, obj)
 	}
 
@@ -197,7 +197,7 @@ func (s *DodoService) handlePaymentSucceeded(ctx context.Context, raw json.RawMe
 	invoiceErr := s.recordInvoice(ctx, orgID, planSlug, obj)
 	attachErr := s.attachPlan(ctx, orgID, planSlug)
 	if invoiceErr == nil && attachErr == nil {
-		log.Printf("dodo webhook: payment.succeeded granted %d micros to org %s (plan=%s, payment=%s)", creditsMicros, orgID, planSlug, paymentID)
+		logger.Infof(ctx, "dodo webhook: payment.succeeded granted %d micros to org %s (plan=%s, payment=%s)", creditsMicros, orgID, planSlug, paymentID)
 		return nil
 	}
 	if invoiceErr != nil && attachErr != nil {
@@ -225,7 +225,7 @@ func (s *DodoService) handleRefundSucceeded(ctx context.Context, raw json.RawMes
 
 	paymentID := strings.TrimSpace(refund.PaymentID)
 	if paymentID == "" {
-		log.Printf("dodo webhook: refund.succeeded missing payment_id — skipping")
+		logger.Infof(ctx, "dodo webhook: refund.succeeded missing payment_id — skipping")
 		return nil
 	}
 
@@ -235,7 +235,7 @@ func (s *DodoService) handleRefundSucceeded(ctx context.Context, raw json.RawMes
 	if s.dodo != nil {
 		fetched, err := s.dodo.GetPayment(ctx, paymentID)
 		if err != nil {
-			log.Printf("dodo webhook: refund enrich payment %s: %v", paymentID, err)
+			logger.Infof(ctx, "dodo webhook: refund enrich payment %s: %v", paymentID, err)
 		} else {
 			payment = fetched
 			if payment != nil {
@@ -257,7 +257,7 @@ func (s *DodoService) handleRefundSucceeded(ctx context.Context, raw json.RawMes
 		if _, err := s.invoices.UpdateRefundStatus(ctx, paymentID, refundStatus); err != nil {
 			return err
 		}
-		log.Printf("dodo webhook: refund.succeeded payment=%s status=%s", paymentID, refundStatus)
+		logger.Infof(ctx, "dodo webhook: refund.succeeded payment=%s status=%s", paymentID, refundStatus)
 		return nil
 	}
 
@@ -287,7 +287,7 @@ func (s *DodoService) handleRefundSucceeded(ctx context.Context, raw json.RawMes
 	if err := s.recordInvoice(ctx, orgID, planSlug, obj); err != nil {
 		return err
 	}
-	log.Printf("dodo webhook: refund.succeeded created invoice payment=%s status=%s", paymentID, refundStatus)
+	logger.Infof(ctx, "dodo webhook: refund.succeeded created invoice payment=%s status=%s", paymentID, refundStatus)
 	return nil
 }
 
@@ -371,7 +371,7 @@ func (s *DodoService) recordInvoice(ctx context.Context, orgID, planSlug string,
 	}
 	paymentID := firstNonEmpty(obj.PaymentID, obj.ID)
 	if orgID == "" || paymentID == "" {
-		log.Printf("dodo webhook: skip invoice persist org=%q payment=%q", orgID, paymentID)
+		logger.Infof(ctx, "dodo webhook: skip invoice persist org=%q payment=%q", orgID, paymentID)
 		return nil
 	}
 
@@ -434,7 +434,7 @@ func (s *DodoService) recordInvoice(ctx context.Context, orgID, planSlug string,
 	}); err != nil {
 		return fmt.Errorf("save invoice: %w", err)
 	}
-	log.Printf("dodo webhook: saved invoice payment=%s org=%s amount=%d %s", paymentID, orgID, amount, currency)
+	logger.Infof(ctx, "dodo webhook: saved invoice payment=%s org=%s amount=%d %s", paymentID, orgID, amount, currency)
 	return nil
 }
 

@@ -3,11 +3,12 @@ package apikey
 import (
 	"encoding/json"
 	"errors"
-	"log"
 	"net/http"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+
+	"github.com/shivang-16/orbit.api/internal/logger"
 
 	apikeyService "github.com/shivang-16/orbit.api/internal/services/apikey"
 )
@@ -23,7 +24,7 @@ func NewController(service *apikeyService.Service) *Controller {
 func (c *Controller) List(w http.ResponseWriter, r *http.Request) {
 	resp, err := c.service.List(r.Context(), organizationID(r))
 	if err != nil {
-		log.Printf("api-keys/list org=%s: %v", organizationID(r), err)
+		logger.Error(r.Context(), "api-keys/list failed", "org_id", organizationID(r), "error", err)
 		writeServiceError(w, err, "failed to list api keys")
 		return
 	}
@@ -42,18 +43,18 @@ func (c *Controller) Create(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := c.service.Create(r.Context(), req)
 	if err != nil {
-		log.Printf("api-keys/create org=%s: %v", req.OrganizationID, err)
+		logger.Error(r.Context(), "api-keys/create failed", "org_id", req.OrganizationID, "error", err)
 		writeServiceError(w, err, "failed to create api key")
 		return
 	}
-	log.Printf("api-keys/create ok org=%s", req.OrganizationID)
+	logger.Info(r.Context(), "api-keys/create ok", "org_id", req.OrganizationID)
 	writeJSON(w, http.StatusCreated, resp)
 }
 
 func (c *Controller) Delete(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if err := c.service.Delete(r.Context(), id, organizationID(r)); err != nil {
-		log.Printf("api-keys/delete id=%s org=%s: %v", id, organizationID(r), err)
+		logger.Error(r.Context(), "api-keys/delete failed", "id", id, "org_id", organizationID(r), "error", err)
 		writeServiceError(w, err, "failed to delete api key")
 		return
 	}

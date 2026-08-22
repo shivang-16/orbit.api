@@ -2,8 +2,9 @@ package billing
 
 import (
 	"context"
-	"log"
 	"time"
+
+	"github.com/shivang-16/orbit.api/internal/logger"
 )
 
 type ReliableEnqueuer struct {
@@ -23,7 +24,7 @@ func (e *ReliableEnqueuer) Enqueue(job Job) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := e.processor.Process(ctx, job); err != nil {
-			log.Printf("billing: sync settle failed key=%s hold=%s: %v", job.IdempotencyKey, job.HoldID, err)
+			logger.Error(logger.SetTag(ctx, logger.TagBilling), "billing: sync settle failed", "idempotency_key", job.IdempotencyKey, "hold_id", job.HoldID, "error", err)
 			if e.fallback != nil {
 				e.fallback.Enqueue(job)
 			}

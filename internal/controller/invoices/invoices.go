@@ -4,11 +4,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+
+	"github.com/shivang-16/orbit.api/internal/logger"
 
 	invoicesService "github.com/shivang-16/orbit.api/internal/services/invoices"
 )
@@ -25,7 +26,7 @@ func (c *Controller) List(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	resp, err := c.service.List(r.Context(), organizationID(r), q.Get("page"), q.Get("limit"))
 	if err != nil {
-		log.Printf("invoices/list org=%s: %v", organizationID(r), err)
+		logger.Error(r.Context(), "invoices/list failed", "org_id", organizationID(r), "error", err)
 		writeServiceError(w, err, "failed to load invoices")
 		return
 	}
@@ -36,7 +37,7 @@ func (c *Controller) PDF(w http.ResponseWriter, r *http.Request) {
 	paymentID := chi.URLParam(r, "paymentId")
 	body, contentType, err := c.service.InvoicePDF(r.Context(), organizationID(r), paymentID)
 	if err != nil {
-		log.Printf("invoices/pdf org=%s payment=%s: %v", organizationID(r), paymentID, err)
+		logger.Error(r.Context(), "invoices/pdf failed", "org_id", organizationID(r), "payment_id", paymentID, "error", err)
 		writeServiceError(w, err, "failed to download invoice")
 		return
 	}

@@ -6,12 +6,13 @@ package apikey
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"net/http"
 	"strings"
 
+	"github.com/shivang-16/orbit.api/internal/logger"
 	"github.com/shivang-16/orbit.api/internal/model"
 	apikeyRepository "github.com/shivang-16/orbit.api/internal/repositories/apikey"
+	userRepository "github.com/shivang-16/orbit.api/internal/repositories/user"
 	apikeyService "github.com/shivang-16/orbit.api/internal/services/apikey"
 )
 
@@ -23,11 +24,12 @@ const (
 )
 
 type Middleware struct {
-	keys *apikeyRepository.Repository
+	keys  *apikeyRepository.Repository
+	users *userRepository.Repository
 }
 
-func New(keys *apikeyRepository.Repository) *Middleware {
-	return &Middleware{keys: keys}
+func New(keys *apikeyRepository.Repository, users *userRepository.Repository) *Middleware {
+	return &Middleware{keys: keys, users: users}
 }
 
 func (m *Middleware) Authenticate(next http.Handler) http.Handler {
@@ -38,9 +40,10 @@ func (m *Middleware) Authenticate(next http.Handler) http.Handler {
 			return
 		}
 
-		item, err := m.keys.GetActiveByHash(r.Context(), apikeyService.HashSecret(secret))
+		ctx := r.Context()
+		item, err := m.keys.GetActiveByHash(ctx, apikeyService.HashSecret(secret))
 		if err != nil {
-			log.Printf("apikey: lookup failed: %v", err)
+			logger.Error(ctx, "apikey: lookup failed", "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to validate api key")
 			return
 		}
@@ -48,7 +51,7 @@ func (m *Middleware) Authenticate(next http.Handler) http.Handler {
 		// and a non-expired key. Re-check status here so an inactive key can
 		// never authenticate even if the query is later loosened.
 		if item == nil || item.Status != model.APIKeyStatusActive {
-			log.Printf("apikey: invalid or inactive api key path=%s", r.URL.Path)
+			logger.Warn(ctx, "apikey: invalid or inactive api key")
 			writeError(w, http.StatusUnauthorized, "invalid api key")
 			return
 		}
@@ -56,11 +59,19 @@ func (m *Middleware) Authenticate(next http.Handler) http.Handler {
 		// Detached from the request context so cancellation on response
 		// flush doesn't race with (or skip) recording usage.
 		go func(id string) {
-			_ = m.keys.TouchLastUsed(context.WithoutCancel(r.Context()), id)
+			_ = m.keys.TouchLastUsed(context.WithoutCancel(ctx), id)
 		}(item.ID)
 
-		ctx := context.WithValue(r.Context(), organizationIDKey, item.OrganizationID)
+		ctx = context.WithValue(ctx, organizationIDKey, item.OrganizationID)
 		ctx = context.WithValue(ctx, apiKeyIDKey, item.ID)
+		ctx = logger.SetOrg(ctx, item.OrganizationID)
+		if m.users != nil && item.CreatedBy != "" {
+			if user, lookupErr := m.users.GetByID(ctx, item.CreatedBy); lookupErr != nil {
+				logger.Warn(ctx, "apikey: owner email lookup failed", "user_id", item.CreatedBy, "error", lookupErr)
+			} else if user != nil {
+				ctx = logger.SetUser(ctx, user.ID, user.Email)
+			}
+		}
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -79,7 +90,8 @@ func APIKeyID(ctx context.Context) (string, bool) {
 // same way Authenticate does, without an API key. Used by the dashboard
 // playground so session-authenticated chat is billed to the active org.
 func WithOrganization(ctx context.Context, organizationID string) context.Context {
-	return context.WithValue(ctx, organizationIDKey, organizationID)
+	ctx = context.WithValue(ctx, organizationIDKey, organizationID)
+	return logger.SetOrg(ctx, organizationID)
 }
 
 // credential extracts the Orbit API key from a request, accepting both

@@ -3,7 +3,6 @@ package inference
 import (
 	"encoding/json"
 	"errors"
-	"log"
 	"net/http"
 	"strings"
 
@@ -11,6 +10,7 @@ import (
 
 	sharedController "github.com/shivang-16/orbit.api/internal/controller/shared"
 	"github.com/shivang-16/orbit.api/internal/limiter"
+	"github.com/shivang-16/orbit.api/internal/logger"
 	apikeyMiddleware "github.com/shivang-16/orbit.api/internal/middleware/apikey"
 	authMiddleware "github.com/shivang-16/orbit.api/internal/middleware/auth"
 	organizationRepository "github.com/shivang-16/orbit.api/internal/repositories/organization"
@@ -33,7 +33,7 @@ func (c *Controller) Chat(w http.ResponseWriter, r *http.Request) {
 
 	var req inferenceService.ChatRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		log.Printf("inference/chat: invalid body model=%s: %v", modelID, err)
+		logger.Warn(r.Context(), "inference/chat: invalid body", "model", modelID, "error", err)
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
@@ -41,7 +41,7 @@ func (c *Controller) Chat(w http.ResponseWriter, r *http.Request) {
 	result, err := c.service.Chat(r.Context(), modelID, req, w)
 	if err != nil {
 		orgID, _ := apikeyMiddleware.OrganizationID(r.Context())
-		log.Printf("inference/chat failed model=%s org=%s: %v", modelID, orgID, err)
+		logger.Error(r.Context(), "inference/chat failed", "model", modelID, "org_id", orgID, "error", err)
 		if writeRateLimited(w, err) {
 			return
 		}
@@ -84,7 +84,7 @@ func (c *Controller) Playground(w http.ResponseWriter, r *http.Request) {
 
 	orgID, err := c.resolvePlaygroundOrg(r)
 	if err != nil {
-		log.Printf("inference/playground org: %v", err)
+		logger.Error(r.Context(), "inference/playground org", "error", err)
 		switch {
 		case errors.Is(err, errNoOrganization):
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "no organization"})
@@ -98,7 +98,7 @@ func (c *Controller) Playground(w http.ResponseWriter, r *http.Request) {
 
 	var req inferenceService.ChatRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		log.Printf("inference/playground: invalid body model=%s: %v", modelID, err)
+		logger.Warn(r.Context(), "inference/playground: invalid body", "model", modelID, "error", err)
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
@@ -106,9 +106,10 @@ func (c *Controller) Playground(w http.ResponseWriter, r *http.Request) {
 	req.Stream = &stream
 
 	ctx := limiter.WithPlayground(apikeyMiddleware.WithOrganization(r.Context(), orgID))
+	ctx = logger.SetTag(ctx, logger.TagInference)
 	result, err := c.service.Chat(ctx, modelID, req, w)
 	if err != nil {
-		log.Printf("inference/playground failed model=%s org=%s: %v", modelID, orgID, err)
+		logger.Error(ctx, "inference/playground failed", "model", modelID, "org_id", orgID, "error", err)
 		if writeRateLimited(w, err) {
 			return
 		}

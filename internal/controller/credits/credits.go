@@ -3,10 +3,10 @@ package credits
 import (
 	"encoding/json"
 	"errors"
-	"log"
 	"net/http"
 	"strings"
 
+	"github.com/shivang-16/orbit.api/internal/logger"
 	creditsService "github.com/shivang-16/orbit.api/internal/services/credits"
 )
 
@@ -21,7 +21,7 @@ func NewController(service *creditsService.Service) *Controller {
 func (c *Controller) GetOrganizationCredits(w http.ResponseWriter, r *http.Request) {
 	resp, err := c.service.GetOrganizationCredits(r.Context(), organizationID(r))
 	if err != nil {
-		log.Printf("credits/get org=%s: %v", organizationID(r), err)
+		logger.Error(r.Context(), "credits/get failed", "org_id", organizationID(r), "error", err)
 		writeServiceError(w, err, "failed to load credits")
 		return
 	}
@@ -31,7 +31,7 @@ func (c *Controller) GetOrganizationCredits(w http.ResponseWriter, r *http.Reque
 func (c *Controller) ListOrganizationCreditHistory(w http.ResponseWriter, r *http.Request) {
 	resp, err := c.service.ListOrganizationCreditHistory(r.Context(), organizationID(r))
 	if err != nil {
-		log.Printf("credits/history org=%s: %v", organizationID(r), err)
+		logger.Error(r.Context(), "credits/history failed", "org_id", organizationID(r), "error", err)
 		writeServiceError(w, err, "failed to list credit history")
 		return
 	}
@@ -42,7 +42,7 @@ func (c *Controller) GetUsage(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	resp, err := c.service.GetUsage(r.Context(), organizationID(r), q.Get("range"), q.Get("page"), q.Get("limit"))
 	if err != nil {
-		log.Printf("usage/get org=%s range=%s page=%s limit=%s: %v", organizationID(r), q.Get("range"), q.Get("page"), q.Get("limit"), err)
+		logger.Error(r.Context(), "usage/get failed", "org_id", organizationID(r), "range", q.Get("range"), "page", q.Get("page"), "limit", q.Get("limit"), "error", err)
 		if errors.Is(err, creditsService.ErrInvalidRange) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid range"})
 			return

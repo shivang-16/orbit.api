@@ -41,6 +41,7 @@ func registerV1(
 	invoices *invoicesController.Controller,
 	webhooks *webhookController.Controller,
 	apiKeyAuth *apikeyMiddleware.Middleware,
+	clerkAuth *authMiddleware.Middleware,
 ) {
 	// Every ordinary route gets a tight 30s timeout. The inference chat
 	// route below is deliberately excluded and gets its own, much longer
@@ -56,7 +57,7 @@ func registerV1(
 		r.Post("/webhooks/dodo", webhooks.Dodo)
 
 		r.Group(func(r chi.Router) {
-			r.Use(authMiddleware.Clerk)
+			r.Use(clerkAuth.Clerk)
 			r.Post("/users/sync", users.Sync)
 			r.Get("/catalogue", catalogue.List)
 			r.Get("/catalogue/overview", catalogue.Overview)
@@ -82,7 +83,7 @@ func registerV1(
 	// to the active organization. Same 5-minute timeout as API-key chat
 	// so a streamed completion is not cut off by the 30s dashboard budget.
 	r.Group(func(r chi.Router) {
-		r.Use(authMiddleware.Clerk)
+		r.Use(clerkAuth.Clerk)
 		r.Use(middleware.Timeout(time.Duration(cfg.Server.InferenceTimeoutSeconds) * time.Second))
 		r.Post("/playground/models/{id}/chat", inference.Playground)
 	})

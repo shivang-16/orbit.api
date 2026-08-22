@@ -2,9 +2,9 @@ package plan
 
 import (
 	"encoding/json"
-	"log"
 	"net/http"
 
+	"github.com/shivang-16/orbit.api/internal/logger"
 	planService "github.com/shivang-16/orbit.api/internal/services/plan"
 )
 
@@ -19,7 +19,7 @@ func NewController(service *planService.Service) *Controller {
 func (c *Controller) List(w http.ResponseWriter, r *http.Request) {
 	resp, err := c.service.List(r.Context())
 	if err != nil {
-		log.Printf("plans/list: %v", err)
+		logger.Error(r.Context(), "plans/list failed", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list plans"})
 		return
 	}

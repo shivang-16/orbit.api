@@ -4,10 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log"
 	"strings"
 
 	"github.com/shivang-16/orbit.api/internal/infra/clerk"
+	"github.com/shivang-16/orbit.api/internal/logger"
 	authMiddleware "github.com/shivang-16/orbit.api/internal/middleware/auth"
 	"github.com/shivang-16/orbit.api/internal/model"
 	billingRepository "github.com/shivang-16/orbit.api/internal/repositories/billing"
@@ -53,7 +53,7 @@ func (s *Service) Sync(ctx context.Context) (*model.User, bool, error) {
 		return existing, false, nil
 	}
 
-	log.Printf("users/sync: clerk GetProfile user=%s", userID)
+	logger.Info(ctx, "users/sync: clerk GetProfile", "user_id", userID)
 	profile, err := s.clerk.GetProfile(ctx, userID)
 	if err != nil {
 		return nil, false, fmt.Errorf("clerk GetProfile user=%s: %w", userID, err)
@@ -77,7 +77,16 @@ func (s *Service) sendWelcome(user *model.User) {
 	if s.mail == nil || user == nil {
 		return
 	}
-	go s.mail.SendWelcome(context.Background(), user.Email, firstName(user.Name))
+	go func() {
+		defer func() {
+			if rec := recover(); rec != nil {
+				logger.Error(context.Background(), "mail: welcome email panicked", "recover", rec)
+			}
+		}()
+		ctx := logger.SetTag(context.Background(), logger.TagMail)
+		ctx = logger.SetUser(ctx, user.ID, user.Email)
+		s.mail.SendWelcome(ctx, user.Email, firstName(user.Name))
+	}()
 }
 
 func firstName(name string) string {
@@ -120,7 +129,11 @@ func (s *Service) createUserWithDefaultOrg(ctx context.Context, user *model.User
 		return nil, fmt.Errorf("commit: %w", err)
 	}
 
-	log.Printf("users/sync: granted signup credits user=%s org=%s amount_micros=%d", created.ID, org.ID, s.signupCredits)
+	logger.Info(ctx, "users/sync: granted signup credits",
+		"user_id", created.ID,
+		"org_id", org.ID,
+		"amount_micros", s.signupCredits,
+	)
 
 	return created, nil
 }

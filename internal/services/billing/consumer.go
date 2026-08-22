@@ -2,10 +2,10 @@ package billing
 
 import (
 	"context"
-	"log"
 	"time"
 
 	"github.com/shivang-16/orbit.api/internal/infra/sqs"
+	"github.com/shivang-16/orbit.api/internal/logger"
 )
 
 func RunConsumer(ctx context.Context, client *sqs.Client, processor *Processor) error {
@@ -19,7 +19,7 @@ func RunConsumer(ctx context.Context, client *sqs.Client, processor *Processor) 
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			log.Printf("billing: receive: %v", err)
+			logger.Error(logger.SetTag(ctx, logger.TagBilling), "billing: receive failed", "error", err)
 			time.Sleep(2 * time.Second)
 			continue
 		}
@@ -30,17 +30,17 @@ func RunConsumer(ctx context.Context, client *sqs.Client, processor *Processor) 
 				// Leave the message on the queue so SQS redrive can move it
 				// to the DLQ after maxReceiveCount. Deleting here would
 				// drop unbillable jobs forever.
-				log.Printf("billing: invalid message receives=%d: %v", msg.ReceiveCount, err)
+				logger.Error(logger.SetTag(ctx, logger.TagBilling), "billing: invalid message", "receives", msg.ReceiveCount, "error", err)
 				continue
 			}
 
 			if err := processor.Process(ctx, job); err != nil {
-				log.Printf("billing: process receives=%d key=%s: %v", msg.ReceiveCount, job.IdempotencyKey, err)
+				logger.Error(logger.SetTag(ctx, logger.TagBilling), "billing: process failed", "receives", msg.ReceiveCount, "idempotency_key", job.IdempotencyKey, "error", err)
 				continue
 			}
 
 			if err := client.Delete(ctx, msg.ReceiptHandle); err != nil {
-				log.Printf("billing: delete key=%s: %v", job.IdempotencyKey, err)
+				logger.Error(logger.SetTag(ctx, logger.TagBilling), "billing: delete failed", "idempotency_key", job.IdempotencyKey, "error", err)
 			}
 		}
 	}

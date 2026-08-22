@@ -76,7 +76,7 @@ func TestChatSonnet45(t *testing.T) {
 	ctrl := inferenceController.NewController(svc, billingWorker, orgRepo)
 
 	r := chi.NewRouter()
-	r.Use(apikeyMiddleware.New(apiKeyRepo).Authenticate)
+	r.Use(apikeyMiddleware.New(apiKeyRepo, nil).Authenticate)
 	r.Post("/api/v1/models/{id}/chat", ctrl.Chat)
 
 	body, err := json.Marshal(map[string]any{
@@ -178,7 +178,7 @@ func TestChatSonnet45Stream(t *testing.T) {
 	ctrl := inferenceController.NewController(svc, billingWorker, orgRepo)
 
 	r := chi.NewRouter()
-	r.Use(apikeyMiddleware.New(apiKeyRepo).Authenticate)
+	r.Use(apikeyMiddleware.New(apiKeyRepo, nil).Authenticate)
 	r.Post("/api/v1/models/{id}/chat", ctrl.Chat)
 
 	body, err := json.Marshal(map[string]any{

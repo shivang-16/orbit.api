@@ -3,10 +3,10 @@ package organization
 import (
 	"encoding/json"
 	"errors"
-	"log"
 	"net/http"
 	"strings"
 
+	"github.com/shivang-16/orbit.api/internal/logger"
 	organizationService "github.com/shivang-16/orbit.api/internal/services/organization"
 )
 
@@ -21,7 +21,7 @@ func NewController(service *organizationService.Service) *Controller {
 func (c *Controller) List(w http.ResponseWriter, r *http.Request) {
 	resp, err := c.service.List(r.Context())
 	if err != nil {
-		log.Printf("organizations/list: %v", err)
+		logger.Error(r.Context(), "organizations/list failed", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list organizations"})
 		return
 	}
@@ -37,11 +37,11 @@ func (c *Controller) Create(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := c.service.Create(r.Context(), req)
 	if err != nil {
-		log.Printf("organizations/create: %v", err)
+		logger.Error(r.Context(), "organizations/create failed", "error", err)
 		writeServiceError(w, err, "failed to create organization")
 		return
 	}
-	log.Printf("organizations/create ok id=%s name=%s", resp.Organization.ID, resp.Organization.Name)
+	logger.Info(r.Context(), "organizations/create ok", "org_id", resp.Organization.ID, "name", resp.Organization.Name)
 	writeJSON(w, http.StatusCreated, resp)
 }
 
@@ -57,18 +57,18 @@ func (c *Controller) Update(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := c.service.Update(r.Context(), req)
 	if err != nil {
-		log.Printf("organizations/update: %v", err)
+		logger.Error(r.Context(), "organizations/update failed", "error", err)
 		writeServiceError(w, err, "failed to update organization")
 		return
 	}
-	log.Printf("organizations/update ok id=%s name=%s", resp.Organization.ID, resp.Organization.Name)
+	logger.Info(r.Context(), "organizations/update ok", "org_id", resp.Organization.ID, "name", resp.Organization.Name)
 	writeJSON(w, http.StatusOK, resp)
 }
 
 func (c *Controller) ListMembers(w http.ResponseWriter, r *http.Request) {
 	resp, err := c.service.ListMembers(r.Context(), organizationID(r))
 	if err != nil {
-		log.Printf("organizations/members/list: %v", err)
+		logger.Error(r.Context(), "organizations/members/list failed", "error", err)
 		writeServiceError(w, err, "failed to list members")
 		return
 	}
@@ -87,11 +87,11 @@ func (c *Controller) AddMember(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := c.service.AddMember(r.Context(), req)
 	if err != nil {
-		log.Printf("organizations/members/add: %v", err)
+		logger.Error(r.Context(), "organizations/members/add failed", "error", err)
 		writeServiceError(w, err, "failed to add member")
 		return
 	}
-	log.Printf("organizations/members/add ok org=%s user=%s", resp.Member.OrganizationID, resp.Member.UserID)
+	logger.Info(r.Context(), "organizations/members/add ok", "org_id", resp.Member.OrganizationID, "user_id", resp.Member.UserID)
 	writeJSON(w, http.StatusCreated, resp)
 }
 

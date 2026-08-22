@@ -83,7 +83,7 @@ func newTestHarness(t *testing.T) *testHarness {
 	ctrl := openaiController.NewController(svc, catalogueRepo, billingWorker)
 
 	r := chi.NewRouter()
-	r.Use(apikeyMiddleware.New(apiKeyRepo).Authenticate)
+	r.Use(apikeyMiddleware.New(apiKeyRepo, nil).Authenticate)
 	r.Post("/api/v1/chat/completions", ctrl.ChatCompletions)
 	r.Get("/api/v1/models", ctrl.ListModels)
 

@@ -3,34 +3,57 @@ package auth
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"net/http"
 	"strings"
 
 	"github.com/clerk/clerk-sdk-go/v2/jwt"
+
+	"github.com/shivang-16/orbit.api/internal/logger"
+	userRepository "github.com/shivang-16/orbit.api/internal/repositories/user"
 )
 
 type contextKey string
 
 const userIDKey contextKey = "user_id"
 
-func Clerk(next http.Handler) http.Handler {
+type Middleware struct {
+	users *userRepository.Repository
+}
+
+func New(users *userRepository.Repository) *Middleware {
+	return &Middleware{users: users}
+}
+
+func (m *Middleware) Clerk(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
 		token := bearerToken(r.Header.Get("Authorization"))
 		if token == "" {
-			log.Printf("auth: missing bearer token path=%s", r.URL.Path)
+			logger.Warn(ctx, "auth: missing bearer token")
 			writeUnauthorized(w)
 			return
 		}
 
-		claims, err := jwt.Verify(r.Context(), &jwt.VerifyParams{Token: token})
+		claims, err := jwt.Verify(ctx, &jwt.VerifyParams{Token: token})
 		if err != nil {
-			log.Printf("auth: jwt verify failed path=%s: %v", r.URL.Path, err)
+			logger.Warn(ctx, "auth: jwt verify failed", "error", err)
 			writeUnauthorized(w)
 			return
 		}
 
-		ctx := context.WithValue(r.Context(), userIDKey, claims.Subject)
+		ctx = context.WithValue(ctx, userIDKey, claims.Subject)
+		email := ""
+		if m.users != nil {
+			if user, lookupErr := m.users.GetByID(ctx, claims.Subject); lookupErr != nil {
+				logger.Warn(ctx, "auth: user email lookup failed", "user_id", claims.Subject, "error", lookupErr)
+			} else if user != nil {
+				email = user.Email
+			}
+		}
+		ctx = logger.SetUser(ctx, claims.Subject, email)
+		if orgID := strings.TrimSpace(r.Header.Get("X-Organization-Id")); orgID != "" {
+			ctx = logger.SetOrg(ctx, orgID)
+		}
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

@@ -4,10 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"time"
 
 	"github.com/shivang-16/orbit.api/internal/infra/sqs"
+	"github.com/shivang-16/orbit.api/internal/logger"
 )
 
 type Enqueuer interface {
@@ -29,17 +29,19 @@ func (p *Publisher) Enqueue(job Job) {
 
 	body, err := json.Marshal(job)
 	if err != nil {
-		log.Printf("billing: encode job: %v", err)
+		logger.Error(logger.SetTag(context.Background(), logger.TagBilling), "billing: encode job failed", "error", err)
 		return
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	ctx = logger.SetTag(ctx, logger.TagBilling)
+	ctx = logger.SetOrg(ctx, job.OrganizationID)
 	if err := p.sqs.Publish(ctx, string(body)); err != nil {
-		log.Printf("billing: publish sqs org=%s model=%s: %v", job.OrganizationID, job.ModelCatalogueID, err)
+		logger.Error(ctx, "billing: publish sqs failed", "model", job.ModelCatalogueID, "error", err)
 		return
 	}
-	log.Printf("billing: published sqs org=%s model=%s key=%s", job.OrganizationID, job.ModelCatalogueID, job.IdempotencyKey)
+	logger.Info(ctx, "billing: published sqs", "model", job.ModelCatalogueID, "idempotency_key", job.IdempotencyKey)
 }
 
 func DecodeJob(body string) (Job, error) {

@@ -6,13 +6,14 @@
 package anthropic
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
-	"log"
 	"net/http"
 
 	sharedController "github.com/shivang-16/orbit.api/internal/controller/shared"
 	"github.com/shivang-16/orbit.api/internal/limiter"
+	"github.com/shivang-16/orbit.api/internal/logger"
 	billingService "github.com/shivang-16/orbit.api/internal/services/billing"
 	anthropicCompat "github.com/shivang-16/orbit.api/internal/services/compat/anthropic"
 	inferenceService "github.com/shivang-16/orbit.api/internal/services/inference"
@@ -46,14 +47,14 @@ func (c *Controller) Messages(w http.ResponseWriter, r *http.Request) {
 
 	result, err := c.service.Converse(r.Context(), req.Model, req.ToConverse(), w, sink)
 	if err != nil {
-		c.writeServiceError(w, req.Model, err)
+		c.writeServiceError(r.Context(), w, req.Model, err)
 		return
 	}
 
 	if !result.Streamed {
 		if result.StatusCode != http.StatusOK {
 			anthropicCompat.WriteError(w, mapUpstreamStatus(result.StatusCode), "api_error", inferenceService.BedrockErrorMessage(result.Body))
-		} else if body, ok := c.formatBufferedResponse(w, req.Model, result); ok {
+		} else if body, ok := c.formatBufferedResponse(r.Context(), w, req.Model, result); ok {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write(body)
@@ -67,10 +68,10 @@ func (c *Controller) Messages(w http.ResponseWriter, r *http.Request) {
 	sharedController.RecordUsage(r.Context(), c.billing, "anthropic/messages", result, req.Prompt(), errBody)
 }
 
-func (c *Controller) formatBufferedResponse(w http.ResponseWriter, requestedModel string, result *inferenceService.ChatResult) ([]byte, bool) {
+func (c *Controller) formatBufferedResponse(ctx context.Context, w http.ResponseWriter, requestedModel string, result *inferenceService.ChatResult) ([]byte, bool) {
 	parsed, err := inferenceService.ParseConverseResponse(result.Body)
 	if err != nil {
-		log.Printf("anthropic/messages: parse bedrock response: %v", err)
+		logger.Error(ctx, "anthropic/messages: parse bedrock response", "error", err)
 		anthropicCompat.WriteError(w, http.StatusBadGateway, "api_error", "failed to parse model response")
 		return nil, false
 	}
@@ -80,15 +81,15 @@ func (c *Controller) formatBufferedResponse(w http.ResponseWriter, requestedMode
 	}
 	body, err := anthropicCompat.NewMessageResponse(modelName, parsed)
 	if err != nil {
-		log.Printf("anthropic/messages: encode response: %v", err)
+		logger.Error(ctx, "anthropic/messages: encode response", "error", err)
 		anthropicCompat.WriteError(w, http.StatusInternalServerError, "api_error", "failed to encode response")
 		return nil, false
 	}
 	return body, true
 }
 
-func (c *Controller) writeServiceError(w http.ResponseWriter, modelID string, err error) {
-	log.Printf("anthropic/messages failed model=%s: %v", modelID, err)
+func (c *Controller) writeServiceError(ctx context.Context, w http.ResponseWriter, modelID string, err error) {
+	logger.Error(ctx, "anthropic/messages failed", "model", modelID, "error", err)
 	if limiter.SetHeadersFromError(w, err) {
 		anthropicCompat.WriteError(w, http.StatusTooManyRequests, "rate_limit_error", "rate limit exceeded")
 		return
