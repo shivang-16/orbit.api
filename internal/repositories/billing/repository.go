@@ -39,10 +39,10 @@ type RecordParams struct {
 
 // Record writes the inference row, a usage ledger entry, and bumps the org
 // credit cache in one transaction so a crash cannot charge without a log.
-func (r *Repository) Record(ctx context.Context, params RecordParams) error {
+func (r *Repository) Record(ctx context.Context, params RecordParams) (SettleResult, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("begin billing tx: %w", err)
+		return SettleResult{}, fmt.Errorf("begin billing tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
@@ -56,7 +56,7 @@ func (r *Repository) Record(ctx context.Context, params RecordParams) error {
 
 	idempotencyKey := params.IdempotencyKey
 	if idempotencyKey == "" {
-		return fmt.Errorf("idempotency key is required")
+		return SettleResult{}, fmt.Errorf("idempotency key is required")
 	}
 
 	var requestID string
@@ -87,7 +87,7 @@ func (r *Repository) Record(ctx context.Context, params RecordParams) error {
 		).Scan(&requestID)
 	}
 	if err != nil {
-		return fmt.Errorf("insert inference request: %w", err)
+		return SettleResult{}, fmt.Errorf("insert inference request: %w", err)
 	}
 
 	ledgerInserted := int64(0)
@@ -108,12 +108,12 @@ func (r *Repository) Record(ctx context.Context, params RecordParams) error {
 			"",
 		)
 		if err != nil {
-			return fmt.Errorf("insert credit ledger: %w", err)
+			return SettleResult{}, fmt.Errorf("insert credit ledger: %w", err)
 		}
 
 		ledgerInserted, err = result.RowsAffected()
 		if err != nil {
-			return fmt.Errorf("credit ledger rows: %w", err)
+			return SettleResult{}, fmt.Errorf("credit ledger rows: %w", err)
 		}
 	}
 
@@ -122,12 +122,14 @@ func (r *Repository) Record(ctx context.Context, params RecordParams) error {
 		actual = 0
 	}
 
+	var settled SettleResult
 	if params.HoldID != "" {
 		// actual is the same AmountMicros written to credit_ledger above,
 		// so remaining/used stay aligned with the ledger after this tx.
-		settled, err := settleHoldTx(ctx, tx, params.HoldID, actual)
+		var err error
+		settled, err = settleHoldTx(ctx, tx, params.HoldID, actual)
 		if err != nil {
-			return err
+			return SettleResult{}, err
 		}
 		// Sweeper may have already refunded an expired hold (crash or
 		// SQS retry past TTL). The freeze is back on remaining; if this
@@ -136,21 +138,21 @@ func (r *Repository) Record(ctx context.Context, params RecordParams) error {
 		// and skips.
 		if !settled.Applied && settled.Found && ledgerInserted > 0 && actual > 0 {
 			if err := debitUsageTx(ctx, tx, settled.OrganizationID, actual); err != nil {
-				return err
+				return SettleResult{}, err
 			}
 		}
 	} else if ledgerInserted > 0 {
 		// Legacy path (jobs recorded before holds): deduct actual usage
 		// only when this attempt inserted the ledger row.
 		if err := debitUsageTx(ctx, tx, params.OrganizationID, params.AmountMicros); err != nil {
-			return err
+			return SettleResult{}, err
 		}
 	}
 
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit billing tx: %w", err)
+		return SettleResult{}, fmt.Errorf("commit billing tx: %w", err)
 	}
-	return nil
+	return settled, nil
 }
 
 type GrantParams struct {

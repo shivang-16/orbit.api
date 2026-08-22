@@ -60,3 +60,17 @@ func TestHTTPTagsInference(t *testing.T) {
 		t.Fatalf("tag = %q, want %q", tagged, TagInference)
 	}
 }
+
+func TestHTTPSkipsHealth(t *testing.T) {
+	called := false
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	})
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	rr := httptest.NewRecorder()
+	HTTP(inner).ServeHTTP(rr, req)
+	if !called {
+		t.Fatal("health handler was not called")
+	}
+}

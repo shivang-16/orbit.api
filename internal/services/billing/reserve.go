@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/shivang-16/orbit.api/internal/config"
+	"github.com/shivang-16/orbit.api/internal/logger"
 	billingRepository "github.com/shivang-16/orbit.api/internal/repositories/billing"
 	pricingRepository "github.com/shivang-16/orbit.api/internal/repositories/pricing"
 	inferenceService "github.com/shivang-16/orbit.api/internal/services/inference"
@@ -92,9 +93,11 @@ func (r *Reserver) Reserve(ctx context.Context, params inferenceService.ReserveR
 	}
 
 	return &inferenceService.Hold{
-		ID:           placed.ID,
-		AmountMicros: placed.AmountMicros,
-		MaxTokens:    placed.MaxTokens,
+		ID:                    placed.ID,
+		AmountMicros:          placed.AmountMicros,
+		MaxTokens:             placed.MaxTokens,
+		RemainingBeforeMicros: placed.RemainingBeforeMicros,
+		RemainingAfterMicros:  placed.RemainingAfterMicros,
 	}, nil
 }
 
@@ -102,5 +105,22 @@ func (r *Reserver) Release(ctx context.Context, holdID string) error {
 	if r == nil || r.billing == nil || holdID == "" {
 		return nil
 	}
-	return r.billing.ReleaseHold(ctx, holdID)
+	settled, err := r.billing.ReleaseHold(ctx, holdID)
+	if err != nil {
+		return err
+	}
+	if settled.Applied {
+		logger.Info(ctx, fmt.Sprintf(
+			"inference: credit hold released hold=%d refund=%d remaining %d -> %d",
+			settled.AmountMicros, settled.RefundMicros, settled.RemainingBeforeMicros, settled.RemainingAfterMicros,
+		),
+			"hold_id", holdID,
+			"hold_micros", settled.AmountMicros,
+			"refund_micros", settled.RefundMicros,
+			"actual_micros", settled.ActualMicros,
+			"remaining_before_micros", settled.RemainingBeforeMicros,
+			"remaining_after_micros", settled.RemainingAfterMicros,
+		)
+	}
+	return nil
 }

@@ -6,6 +6,7 @@ package shared
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/shivang-16/orbit.api/internal/logger"
 	apikeyMiddleware "github.com/shivang-16/orbit.api/internal/middleware/apikey"
@@ -46,7 +47,7 @@ func RecordUsage(ctx context.Context, billing billingService.Enqueuer, logTag st
 		return
 	}
 
-	logger.Info(ctx, "inference: enqueue billing",
+	logger.Info(ctx, fmt.Sprintf("inference: enqueue billing in=%d out=%d", result.InputTokens, result.OutputTokens),
 		"source", logTag,
 		"org_id", orgID,
 		"api_key_id", apiKeyID,

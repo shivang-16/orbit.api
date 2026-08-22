@@ -11,10 +11,12 @@ import (
 var ErrInsufficientCredits = errors.New("insufficient credits")
 
 type Hold struct {
-	ID             string
-	AmountMicros   int64
-	MaxTokens      int
-	OrganizationID string
+	ID                    string
+	AmountMicros          int64
+	MaxTokens             int
+	OrganizationID        string
+	RemainingBeforeMicros int64
+	RemainingAfterMicros  int64
 }
 
 // HoldPlanner computes the freeze from remaining credits while the org row
@@ -112,31 +114,34 @@ func (r *Repository) PlaceHold(ctx context.Context, organizationID string, thres
 		return Hold{}, fmt.Errorf("commit hold: %w", err)
 	}
 	return Hold{
-		ID:             holdID,
-		AmountMicros:   amount,
-		MaxTokens:      maxTokens,
-		OrganizationID: organizationID,
+		ID:                    holdID,
+		AmountMicros:          amount,
+		MaxTokens:             maxTokens,
+		OrganizationID:        organizationID,
+		RemainingBeforeMicros: remaining,
+		RemainingAfterMicros:  remaining - amount,
 	}, nil
 }
 
-func (r *Repository) ReleaseHold(ctx context.Context, holdID string) error {
+func (r *Repository) ReleaseHold(ctx context.Context, holdID string) (SettleResult, error) {
 	if holdID == "" {
-		return nil
+		return SettleResult{}, nil
 	}
 
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("begin release tx: %w", err)
+		return SettleResult{}, fmt.Errorf("begin release tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if _, err := settleHoldTx(ctx, tx, holdID, 0); err != nil {
-		return err
+	settled, err := settleHoldTx(ctx, tx, holdID, 0)
+	if err != nil {
+		return SettleResult{}, err
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit release: %w", err)
+		return SettleResult{}, fmt.Errorf("commit release: %w", err)
 	}
-	return nil
+	return settled, nil
 }
 
 func (r *Repository) ReleaseExpiredHolds(ctx context.Context) (int, error) {
@@ -227,11 +232,15 @@ func reclaimExpiredHoldsTxCount(ctx context.Context, tx dbTX, organizationID str
 	return n, nil
 }
 
-type settleHoldResult struct {
-	Found          bool
-	Applied        bool
-	OrganizationID string
-	AmountMicros   int64
+type SettleResult struct {
+	Found                 bool
+	Applied               bool
+	OrganizationID        string
+	AmountMicros          int64
+	ActualMicros          int64
+	RefundMicros          int64
+	RemainingBeforeMicros int64
+	RemainingAfterMicros  int64
 }
 
 // settleHoldTx marks an open hold settled and applies the same actual spend
@@ -243,9 +252,9 @@ type settleHoldResult struct {
 //
 // Lock order is organization then hold, matching PlaceHold and the sweeper,
 // so concurrent settle/reclaim cannot deadlock.
-func settleHoldTx(ctx context.Context, tx dbTX, holdID string, actualMicros int64) (settleHoldResult, error) {
+func settleHoldTx(ctx context.Context, tx dbTX, holdID string, actualMicros int64) (SettleResult, error) {
 	if holdID == "" {
-		return settleHoldResult{}, nil
+		return SettleResult{}, nil
 	}
 	if actualMicros < 0 {
 		actualMicros = 0
@@ -259,16 +268,17 @@ func settleHoldTx(ctx context.Context, tx dbTX, holdID string, actualMicros int6
 		holdID,
 	).Scan(&orgID, &amount)
 	if errors.Is(err, sql.ErrNoRows) {
-		return settleHoldResult{}, nil
+		return SettleResult{}, nil
 	}
 	if err != nil {
-		return settleHoldResult{}, fmt.Errorf("lookup hold: %w", err)
+		return SettleResult{}, fmt.Errorf("lookup hold: %w", err)
 	}
 
-	result := settleHoldResult{
+	result := SettleResult{
 		Found:          true,
 		OrganizationID: orgID,
 		AmountMicros:   amount,
+		ActualMicros:   actualMicros,
 	}
 
 	var remaining int64
@@ -291,12 +301,14 @@ func settleHoldTx(ctx context.Context, tx dbTX, holdID string, actualMicros int6
 		holdID,
 	).Scan(&amount, &settledAt)
 	if errors.Is(err, sql.ErrNoRows) {
-		return settleHoldResult{}, nil
+		return SettleResult{}, nil
 	}
 	if err != nil {
 		return result, fmt.Errorf("lock hold: %w", err)
 	}
 	result.AmountMicros = amount
+	result.RemainingBeforeMicros = remaining
+	result.ActualMicros = actualMicros
 	if settledAt.Valid {
 		return result, nil
 	}
@@ -331,6 +343,8 @@ func settleHoldTx(ctx context.Context, tx dbTX, holdID string, actualMicros int6
 		return result, fmt.Errorf("apply hold settlement: %w", err)
 	}
 	result.Applied = true
+	result.RefundMicros = amount - actualMicros
+	result.RemainingAfterMicros = remaining + amount - actualMicros
 	return result, nil
 }
 

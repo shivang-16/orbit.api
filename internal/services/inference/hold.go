@@ -3,9 +3,11 @@ package inference
 import "context"
 
 type Hold struct {
-	ID           string
-	AmountMicros int64
-	MaxTokens    int
+	ID                    string
+	AmountMicros          int64
+	MaxTokens             int
+	RemainingBeforeMicros int64
+	RemainingAfterMicros  int64
 }
 
 type ReserveRequest struct {

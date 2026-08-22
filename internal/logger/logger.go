@@ -57,9 +57,10 @@ func Init(cfg config.Config) {
 			endpoint += "/"
 		}
 		handlers = append(handlers, slogbetterstack.Option{
-			Level:    level,
-			Token:    token,
-			Endpoint: endpoint,
+			Level:     level,
+			Token:     token,
+			Endpoint:  endpoint,
+			Converter: betterStackConverter,
 		}.NewBetterstackHandler())
 	}
 

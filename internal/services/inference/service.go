@@ -384,10 +384,16 @@ func (s *Service) placeHold(ctx context.Context, catalogueID string, inputTokens
 	if hold == nil || hold.ID == "" || hold.MaxTokens < 1 {
 		return nil, ErrLowCredits
 	}
-	logger.Info(ctx, "inference: credit hold placed",
+	logger.Info(ctx, fmt.Sprintf(
+		"inference: credit hold placed hold=%d remaining %d -> %d",
+		hold.AmountMicros, hold.RemainingBeforeMicros, hold.RemainingAfterMicros,
+	),
 		"hold_id", hold.ID,
+		"hold_micros", hold.AmountMicros,
 		"amount_micros", hold.AmountMicros,
 		"max_tokens", hold.MaxTokens,
+		"remaining_before_micros", hold.RemainingBeforeMicros,
+		"remaining_after_micros", hold.RemainingAfterMicros,
 	)
 	return hold, nil
 }
