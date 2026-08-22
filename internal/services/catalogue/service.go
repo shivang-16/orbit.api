@@ -23,9 +23,10 @@ func NewService(catalogue *catalogueRepository.Repository, pricing *pricingRepos
 	return &Service{catalogue: catalogue, pricing: pricing}
 }
 
-func (s *Service) List(ctx context.Context, tag string) (*ListResponse, error) {
+func (s *Service) List(ctx context.Context, tag string, sortBy string) (*ListResponse, error) {
 	tag = strings.TrimSpace(strings.ToLower(tag))
-	models, err := s.catalogue.ListActive(ctx, tag)
+	sortBy = strings.TrimSpace(strings.ToLower(sortBy))
+	models, err := s.catalogue.ListActive(ctx, tag, sortBy)
 	if err != nil {
 		return nil, fmt.Errorf("list catalogue: %w", err)
 	}
@@ -54,7 +55,7 @@ func (s *Service) Get(ctx context.Context, id string) (*GetResponse, error) {
 }
 
 func (s *Service) Overview(ctx context.Context) (*OverviewResponse, error) {
-	models, err := s.catalogue.ListActive(ctx, "")
+	models, err := s.catalogue.ListActive(ctx, "", "")
 	if err != nil {
 		return nil, fmt.Errorf("list catalogue: %w", err)
 	}
@@ -71,7 +72,7 @@ func (s *Service) Overview(ctx context.Context) (*OverviewResponse, error) {
 
 	return &OverviewResponse{
 		Total:        len(models),
-		Frontier:     limit(rankedByTag(models, "flagship"), 4),
+		Frontier:     limit(newestFirst(rankedByTag(models, "flagship")), 4),
 		Highlights:   highlights,
 		ValueLeaders: limit(rankedByTag(models, "cost-efficient"), 5),
 		Fastest:      limit(rankedByTag(models, "fast"), 5),
@@ -91,6 +92,29 @@ func rankedByTag(models []model.ModelCatalogue, tag string) []model.ModelCatalog
 			return out[i].SortOrder < out[j].SortOrder
 		}
 		return out[i].Name < out[j].Name
+	})
+	return out
+}
+
+// newestFirst orders models by real release date, newest first, keeping
+// the input order (vendor, then rankedByTag's sort_order/name tie-break)
+// for models without a recorded date so the "frontier" ranking is
+// genuinely newest-first rather than an editorial guess.
+func newestFirst(models []model.ModelCatalogue) []model.ModelCatalogue {
+	out := make([]model.ModelCatalogue, len(models))
+	copy(out, models)
+	sort.SliceStable(out, func(i, j int) bool {
+		di, dj := out[i].ModelReleasedDate, out[j].ModelReleasedDate
+		switch {
+		case di == nil && dj == nil:
+			return false
+		case di == nil:
+			return false // undated models sort after dated ones
+		case dj == nil:
+			return true
+		default:
+			return di.After(*dj)
+		}
 	})
 	return out
 }

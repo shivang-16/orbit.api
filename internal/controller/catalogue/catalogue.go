@@ -22,9 +22,10 @@ func NewController(service *catalogueService.Service) *Controller {
 
 func (c *Controller) List(w http.ResponseWriter, r *http.Request) {
 	tag := strings.TrimSpace(r.URL.Query().Get("tag"))
-	resp, err := c.service.List(r.Context(), tag)
+	sortBy := strings.TrimSpace(r.URL.Query().Get("sort"))
+	resp, err := c.service.List(r.Context(), tag, sortBy)
 	if err != nil {
-		logger.Error(r.Context(), "catalogue/list failed", "tag", tag, "error", err)
+		logger.Error(r.Context(), "catalogue/list failed", "tag", tag, "sort", sortBy, "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list models"})
 		return
 	}

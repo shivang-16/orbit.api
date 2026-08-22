@@ -18,6 +18,7 @@ type ModelCatalogue struct {
 	Tags              pq.StringArray `json:"tags" db:"tags"`
 	Modalities        pq.StringArray `json:"modalities" db:"modalities"`
 	IsActive          bool           `json:"is_active" db:"is_active"`
+	ModelReleasedDate *time.Time     `json:"model_released_date" db:"model_released_date"`
 	CreatedAt         time.Time      `json:"created_at" db:"created_at"`
 	UpdatedAt         time.Time      `json:"updated_at" db:"updated_at"`
 }

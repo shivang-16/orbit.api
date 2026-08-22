@@ -24,9 +24,13 @@ func NewRepository(db dbTX) *Repository {
 }
 
 const catalogueColumns = `id, name, slug, vendor, provider, model_id, input_context_limit,
-		       sort_order, tags, modalities, is_active, created_at, updated_at`
+		       sort_order, tags, modalities, is_active, model_released_date, created_at, updated_at`
 
-func (r *Repository) ListActive(ctx context.Context, tag string) ([]model.ModelCatalogue, error) {
+// ListActive returns active catalogue models, optionally filtered by tag.
+// sort controls ordering: "newest"/"oldest" order by model_released_date
+// (nulls last), anything else (including "") keeps the default
+// vendor/sort_order ordering.
+func (r *Repository) ListActive(ctx context.Context, tag string, sort string) ([]model.ModelCatalogue, error) {
 	query := `
 		SELECT ` + catalogueColumns + `
 		FROM model_catalogue
@@ -37,7 +41,14 @@ func (r *Repository) ListActive(ctx context.Context, tag string) ([]model.ModelC
 		query += ` AND tags @> $1`
 		args = append(args, pq.Array([]string{tag}))
 	}
-	query += ` ORDER BY vendor ASC, sort_order ASC`
+	switch sort {
+	case "newest":
+		query += ` ORDER BY model_released_date DESC NULLS LAST, vendor ASC, sort_order ASC`
+	case "oldest":
+		query += ` ORDER BY model_released_date ASC NULLS LAST, vendor ASC, sort_order ASC`
+	default:
+		query += ` ORDER BY vendor ASC, sort_order ASC`
+	}
 
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -111,6 +122,7 @@ func scanCatalogue(scan func(dest ...any) error) (*model.ModelCatalogue, error) 
 		&item.Tags,
 		&item.Modalities,
 		&item.IsActive,
+		&item.ModelReleasedDate,
 		&item.CreatedAt,
 		&item.UpdatedAt,
 	); err != nil {

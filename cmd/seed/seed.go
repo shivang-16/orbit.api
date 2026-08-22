@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"log"
+	"math"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -13,6 +15,11 @@ import (
 	"github.com/shivang-16/orbit.api/internal/infra/postgres"
 )
 
+// catalogueModel is the curated, hand-researched half of a catalogue row.
+// The remaining tags (tier, long-context, vision, audio, cost-efficient)
+// are derived at insert time — see buildTags — from data we already store,
+// so they can't drift out of sync with reality the way a fully static tag
+// list can.
 type catalogueModel struct {
 	Name              string
 	Vendor            string
@@ -20,9 +27,32 @@ type catalogueModel struct {
 	ModelID           string
 	InputContextLimit int
 	SortOrder         int
-	Tags              []string
-	Modalities        []string
-	IsActive          bool
+
+	// Tier is exactly one of "flagship" | "balanced" | "lightweight",
+	// reflecting where the vendor itself positions this model in its
+	// current lineup (e.g. Anthropic's own Opus/Sonnet/Haiku tiering,
+	// Mistral's Large/Devstral/Ministral branding), cross-checked against
+	// relative Bedrock pricing within the same vendor so a cheaper sibling
+	// never outranks a pricier one.
+	Tier string
+
+	// ExtraTags are curated capability/economics tags that aren't
+	// mechanically derivable from stored columns: "reasoning" (documented
+	// extended-thinking/CoT mode), "coding", "agentic" (tool-use/multi-step
+	// agent workflows), "open-source" (genuinely open-weight, not just
+	// "available on Bedrock"), "safety" (guardrail/moderation models), and
+	// "fast" (vendor's latency-optimized variant). Tier, long-context,
+	// vision, audio and cost-efficient are computed — do not repeat them
+	// here.
+	ExtraTags []string
+
+	Modalities []string
+	IsActive   bool
+
+	// ReleasedDate is the model's real public release date (vendor
+	// announcement, model card, or changelog), YYYY-MM-DD. Where only the
+	// release month is confirmable, this uses the 1st of that month.
+	ReleasedDate string
 }
 
 // Bedrock on-demand list prices in USD micros per 1 million tokens
@@ -32,13 +62,89 @@ type modelPrice struct {
 	VendorOutputPerMillionMicros int64
 }
 
+const longContextTokens = 200_000
+
+// blendedMicros approximates real-world spend per model by weighting
+// output tokens 3x input tokens (typical chat/agent traffic is
+// output-heavy). Used only to rank a vendor's own models against each
+// other for the "cost-efficient" tag — never compared across vendors.
+func blendedMicros(p modelPrice) int64 {
+	return (p.VendorInputPerMillionMicros + 3*p.VendorOutputPerMillionMicros) / 4
+}
+
+// costEfficientSet returns the set of model names that rank in the
+// cheapest 40% (rounded up, minimum one) of their own vendor's lineup by
+// blended price. "Cost-efficient" is relative to siblings from the same
+// lab, not the whole catalogue — a cheap-for-Anthropic model can cost more
+// than an expensive-for-Mistral one.
+func costEfficientSet(models []catalogueModel, prices map[string]modelPrice) map[string]bool {
+	byVendor := map[string][]catalogueModel{}
+	for _, m := range models {
+		byVendor[m.Vendor] = append(byVendor[m.Vendor], m)
+	}
+
+	result := map[string]bool{}
+	for _, group := range byVendor {
+		sort.SliceStable(group, func(i, j int) bool {
+			return blendedMicros(prices[group[i].Name]) < blendedMicros(prices[group[j].Name])
+		})
+		cutoff := int(math.Ceil(float64(len(group)) * 0.4))
+		if cutoff < 1 {
+			cutoff = 1
+		}
+		for i := 0; i < cutoff && i < len(group); i++ {
+			result[group[i].Name] = true
+		}
+	}
+	return result
+}
+
+// buildTags assembles a model's final tag list: the curated Tier, tags
+// mechanically derived from stored columns (long-context, vision, audio),
+// the computed cost-efficient flag, then the curated ExtraTags — deduped,
+// tier first.
+func buildTags(m catalogueModel, costEfficient bool) []string {
+	seen := map[string]bool{}
+	var tags []string
+	add := func(tag string) {
+		if tag == "" || seen[tag] {
+			return
+		}
+		seen[tag] = true
+		tags = append(tags, tag)
+	}
+
+	add(m.Tier)
+	if m.InputContextLimit >= longContextTokens {
+		add("long-context")
+	}
+	for _, modality := range m.Modalities {
+		switch modality {
+		case "image":
+			add("vision")
+		case "audio":
+			add("audio")
+		}
+	}
+	if costEfficient {
+		add("cost-efficient")
+	}
+	for _, tag := range m.ExtraTags {
+		add(tag)
+	}
+	return tags
+}
+
 // Add models here (latest → oldest within each vendor), then run:
 //
 //	go run ./cmd/seed
 //
-// Seed deletes that vendor's existing rows, then inserts this list in order.
-// InputContextLimit is the Bedrock model-card context window in tokens
-// (AWS docs, Aug 2026).
+// Seed deletes that vendor's existing rows, then inserts this list in
+// order. InputContextLimit is the Bedrock model-card context window in
+// tokens (AWS docs, Aug 2026). ReleasedDate and Tier/ExtraTags are
+// researched against each vendor's own announcement/model-card/changelog
+// (see PR history for sources) — see buildTags for how the full tag list
+// is assembled.
 var models = []catalogueModel{
 	{
 		Name:              "Claude Opus 5",
@@ -47,9 +153,11 @@ var models = []catalogueModel{
 		ModelID:           "arn:aws:bedrock:us-east-1:471112741644:inference-profile/us.anthropic.claude-opus-5",
 		InputContextLimit: 1_000_000,
 		SortOrder:         1,
-		Tags:              []string{"flagship", "reasoning", "agentic"},
+		Tier:              "flagship",
+		ExtraTags:         []string{"reasoning", "coding", "agentic"},
 		Modalities:        []string{"text", "image"},
 		IsActive:          true,
+		ReleasedDate:      "2026-07-24",
 	},
 	{
 		Name:              "Claude Sonnet 5",
@@ -58,9 +166,11 @@ var models = []catalogueModel{
 		ModelID:           "arn:aws:bedrock:us-east-1:471112741644:inference-profile/us.anthropic.claude-sonnet-5",
 		InputContextLimit: 1_000_000,
 		SortOrder:         2,
-		Tags:              []string{"balanced", "agentic", "coding"},
+		Tier:              "balanced",
+		ExtraTags:         []string{"coding", "agentic"},
 		Modalities:        []string{"text", "image"},
 		IsActive:          true,
+		ReleasedDate:      "2026-06-30",
 	},
 	{
 		Name:              "Claude Fable 5",
@@ -69,9 +179,11 @@ var models = []catalogueModel{
 		ModelID:           "arn:aws:bedrock:us-east-1:471112741644:inference-profile/us.anthropic.claude-fable-5",
 		InputContextLimit: 1_000_000,
 		SortOrder:         3,
-		Tags:              []string{"creative-writing", "balanced"},
+		Tier:              "flagship",
+		ExtraTags:         []string{"reasoning", "agentic"},
 		Modalities:        []string{"text", "image"},
 		IsActive:          true,
+		ReleasedDate:      "2026-06-09",
 	},
 	{
 		Name:              "Claude Opus 4.8",
@@ -80,9 +192,11 @@ var models = []catalogueModel{
 		ModelID:           "arn:aws:bedrock:us-east-1:471112741644:inference-profile/us.anthropic.claude-opus-4-8",
 		InputContextLimit: 1_000_000,
 		SortOrder:         4,
-		Tags:              []string{"flagship", "reasoning"},
+		Tier:              "flagship",
+		ExtraTags:         []string{"reasoning", "coding", "agentic"},
 		Modalities:        []string{"text", "image"},
 		IsActive:          true,
+		ReleasedDate:      "2026-05-28",
 	},
 	{
 		Name:              "Claude Opus 4.7",
@@ -91,9 +205,11 @@ var models = []catalogueModel{
 		ModelID:           "arn:aws:bedrock:us-east-1:471112741644:inference-profile/us.anthropic.claude-opus-4-7",
 		InputContextLimit: 1_000_000,
 		SortOrder:         5,
-		Tags:              []string{"flagship", "reasoning"},
+		Tier:              "flagship",
+		ExtraTags:         []string{"reasoning", "coding", "agentic"},
 		Modalities:        []string{"text", "image"},
 		IsActive:          true,
+		ReleasedDate:      "2026-04-16",
 	},
 	{
 		Name:              "Claude Sonnet 4.6",
@@ -102,9 +218,11 @@ var models = []catalogueModel{
 		ModelID:           "arn:aws:bedrock:us-east-1:471112741644:inference-profile/us.anthropic.claude-sonnet-4-6",
 		InputContextLimit: 1_000_000,
 		SortOrder:         6,
-		Tags:              []string{"balanced", "coding"},
+		Tier:              "balanced",
+		ExtraTags:         []string{"coding", "agentic"},
 		Modalities:        []string{"text", "image"},
 		IsActive:          true,
+		ReleasedDate:      "2026-02-17",
 	},
 	{
 		Name:              "Claude Opus 4.6",
@@ -113,9 +231,11 @@ var models = []catalogueModel{
 		ModelID:           "arn:aws:bedrock:us-east-1:471112741644:inference-profile/us.anthropic.claude-opus-4-6-v1",
 		InputContextLimit: 1_000_000,
 		SortOrder:         7,
-		Tags:              []string{"flagship", "reasoning"},
+		Tier:              "flagship",
+		ExtraTags:         []string{"reasoning", "coding", "agentic"},
 		Modalities:        []string{"text", "image"},
 		IsActive:          true,
+		ReleasedDate:      "2026-02-05",
 	},
 	{
 		Name:              "Claude Opus 4.5",
@@ -124,9 +244,11 @@ var models = []catalogueModel{
 		ModelID:           "arn:aws:bedrock:us-east-1:471112741644:inference-profile/us.anthropic.claude-opus-4-5-20251101-v1:0",
 		InputContextLimit: 200_000,
 		SortOrder:         8,
-		Tags:              []string{"flagship", "reasoning"},
+		Tier:              "flagship",
+		ExtraTags:         []string{"reasoning", "coding", "agentic"},
 		Modalities:        []string{"text", "image"},
 		IsActive:          true,
+		ReleasedDate:      "2025-11-24",
 	},
 	{
 		Name:              "Claude Haiku 4.5",
@@ -135,9 +257,11 @@ var models = []catalogueModel{
 		ModelID:           "arn:aws:bedrock:us-east-1:471112741644:inference-profile/us.anthropic.claude-haiku-4-5-20251001-v1:0",
 		InputContextLimit: 200_000,
 		SortOrder:         9,
-		Tags:              []string{"fast", "lightweight", "cost-efficient"},
+		Tier:              "lightweight",
+		ExtraTags:         []string{"fast"},
 		Modalities:        []string{"text", "image"},
 		IsActive:          true,
+		ReleasedDate:      "2025-10-15",
 	},
 	{
 		Name:              "Claude Sonnet 4.5",
@@ -146,9 +270,11 @@ var models = []catalogueModel{
 		ModelID:           "arn:aws:bedrock:us-east-1:471112741644:inference-profile/us.anthropic.claude-sonnet-4-5-20250929-v1:0",
 		InputContextLimit: 200_000,
 		SortOrder:         10,
-		Tags:              []string{"balanced", "coding"},
+		Tier:              "balanced",
+		ExtraTags:         []string{"coding", "agentic"},
 		Modalities:        []string{"text", "image"},
 		IsActive:          true,
+		ReleasedDate:      "2025-09-29",
 	},
 	{
 		Name:              "GPT 5.6 Luna",
@@ -157,9 +283,11 @@ var models = []catalogueModel{
 		ModelID:           "arn:aws:bedrock:us-east-1:471112741644:inference-profile/us.openai.gpt-5.6-luna",
 		InputContextLimit: 1_000_000,
 		SortOrder:         1,
-		Tags:              []string{"fast", "lightweight"},
+		Tier:              "lightweight",
+		ExtraTags:         []string{"fast"},
 		Modalities:        []string{"text", "image"},
 		IsActive:          true,
+		ReleasedDate:      "2026-07-09",
 	},
 	{
 		Name:              "GPT 5.6 Sol",
@@ -168,9 +296,11 @@ var models = []catalogueModel{
 		ModelID:           "arn:aws:bedrock:us-east-1:471112741644:inference-profile/us.openai.gpt-5.6-sol",
 		InputContextLimit: 1_000_000,
 		SortOrder:         2,
-		Tags:              []string{"balanced", "agentic"},
+		Tier:              "flagship",
+		ExtraTags:         []string{"reasoning", "agentic"},
 		Modalities:        []string{"text", "image"},
 		IsActive:          true,
+		ReleasedDate:      "2026-07-09",
 	},
 	{
 		Name:              "GPT 5.6 Terra",
@@ -179,9 +309,11 @@ var models = []catalogueModel{
 		ModelID:           "arn:aws:bedrock:us-east-1:471112741644:inference-profile/us.openai.gpt-5.6-terra",
 		InputContextLimit: 1_000_000,
 		SortOrder:         3,
-		Tags:              []string{"flagship", "reasoning"},
+		Tier:              "balanced",
+		ExtraTags:         []string{"agentic"},
 		Modalities:        []string{"text", "image"},
 		IsActive:          true,
+		ReleasedDate:      "2026-07-09",
 	},
 	{
 		Name:              "GPT OSS Safeguard 120B",
@@ -190,9 +322,11 @@ var models = []catalogueModel{
 		ModelID:           "openai.gpt-oss-safeguard-120b",
 		InputContextLimit: 128_000,
 		SortOrder:         4,
-		Tags:              []string{"open-source", "safety"},
+		Tier:              "balanced",
+		ExtraTags:         []string{"open-source", "safety", "reasoning"},
 		Modalities:        []string{"text"},
 		IsActive:          true,
+		ReleasedDate:      "2025-10-29",
 	},
 	{
 		Name:              "GPT OSS Safeguard 20B",
@@ -201,9 +335,11 @@ var models = []catalogueModel{
 		ModelID:           "openai.gpt-oss-safeguard-20b",
 		InputContextLimit: 128_000,
 		SortOrder:         5,
-		Tags:              []string{"open-source", "safety", "lightweight"},
+		Tier:              "lightweight",
+		ExtraTags:         []string{"open-source", "safety", "reasoning"},
 		Modalities:        []string{"text"},
 		IsActive:          true,
+		ReleasedDate:      "2025-10-29",
 	},
 	{
 		Name:              "GPT OSS 120B",
@@ -212,9 +348,11 @@ var models = []catalogueModel{
 		ModelID:           "openai.gpt-oss-120b-1:0",
 		InputContextLimit: 128_000,
 		SortOrder:         6,
-		Tags:              []string{"open-source", "balanced"},
+		Tier:              "balanced",
+		ExtraTags:         []string{"open-source", "reasoning", "agentic"},
 		Modalities:        []string{"text"},
 		IsActive:          true,
+		ReleasedDate:      "2025-08-05",
 	},
 	{
 		Name:              "GPT OSS 20B",
@@ -223,9 +361,11 @@ var models = []catalogueModel{
 		ModelID:           "openai.gpt-oss-20b-1:0",
 		InputContextLimit: 128_000,
 		SortOrder:         7,
-		Tags:              []string{"open-source", "lightweight", "cost-efficient"},
+		Tier:              "lightweight",
+		ExtraTags:         []string{"open-source", "reasoning", "fast"},
 		Modalities:        []string{"text"},
 		IsActive:          true,
+		ReleasedDate:      "2025-08-05",
 	},
 	{
 		Name:              "Kimi K2.5",
@@ -234,9 +374,11 @@ var models = []catalogueModel{
 		ModelID:           "moonshotai.kimi-k2.5",
 		InputContextLimit: 256_000,
 		SortOrder:         1,
-		Tags:              []string{"flagship", "balanced", "long-context"},
+		Tier:              "flagship",
+		ExtraTags:         []string{"open-source", "agentic"},
 		Modalities:        []string{"text"},
 		IsActive:          true,
+		ReleasedDate:      "2026-01-27",
 	},
 	{
 		Name:              "Kimi K2 Thinking",
@@ -245,9 +387,11 @@ var models = []catalogueModel{
 		ModelID:           "moonshot.kimi-k2-thinking",
 		InputContextLimit: 256_000,
 		SortOrder:         2,
-		Tags:              []string{"reasoning", "thinking"},
+		Tier:              "balanced",
+		ExtraTags:         []string{"open-source", "reasoning", "agentic"},
 		Modalities:        []string{"text"},
 		IsActive:          true,
+		ReleasedDate:      "2025-11-06",
 	},
 	{
 		Name:              "DeepSeek V3.2",
@@ -256,9 +400,11 @@ var models = []catalogueModel{
 		ModelID:           "deepseek.v3.2",
 		InputContextLimit: 164_000,
 		SortOrder:         1,
-		Tags:              []string{"flagship", "reasoning", "coding", "long-context"},
+		Tier:              "balanced",
+		ExtraTags:         []string{"open-source", "reasoning", "coding", "agentic"},
 		Modalities:        []string{"text"},
 		IsActive:          true,
+		ReleasedDate:      "2025-12-01",
 	},
 	{
 		Name:              "DeepSeek V3.1",
@@ -267,9 +413,11 @@ var models = []catalogueModel{
 		ModelID:           "deepseek.v3-v1:0",
 		InputContextLimit: 128_000,
 		SortOrder:         2,
-		Tags:              []string{"flagship", "reasoning", "coding"},
+		Tier:              "lightweight",
+		ExtraTags:         []string{"open-source", "coding"},
 		Modalities:        []string{"text"},
 		IsActive:          true,
+		ReleasedDate:      "2025-08-21",
 	},
 	{
 		Name:              "DeepSeek R1",
@@ -278,9 +426,11 @@ var models = []catalogueModel{
 		ModelID:           "arn:aws:bedrock:us-east-1:471112741644:inference-profile/us.deepseek.r1-v1:0",
 		InputContextLimit: 128_000,
 		SortOrder:         3,
-		Tags:              []string{"flagship", "reasoning", "thinking", "coding"},
+		Tier:              "flagship",
+		ExtraTags:         []string{"open-source", "reasoning", "coding"},
 		Modalities:        []string{"text"},
 		IsActive:          true,
+		ReleasedDate:      "2025-01-20",
 	},
 	{
 		Name:              "Mistral Large 3",
@@ -289,9 +439,11 @@ var models = []catalogueModel{
 		ModelID:           "mistral.mistral-large-3-675b-instruct",
 		InputContextLimit: 256_000,
 		SortOrder:         1,
-		Tags:              []string{"flagship", "reasoning", "coding", "long-context"},
+		Tier:              "flagship",
+		ExtraTags:         []string{"open-source", "coding"},
 		Modalities:        []string{"text", "image"},
 		IsActive:          true,
+		ReleasedDate:      "2025-12-02",
 	},
 	{
 		Name:              "Devstral 2 123B",
@@ -300,9 +452,11 @@ var models = []catalogueModel{
 		ModelID:           "mistral.devstral-2-123b",
 		InputContextLimit: 256_000,
 		SortOrder:         2,
-		Tags:              []string{"coding", "agentic", "long-context"},
+		Tier:              "balanced",
+		ExtraTags:         []string{"open-source", "coding", "agentic"},
 		Modalities:        []string{"text"},
 		IsActive:          true,
+		ReleasedDate:      "2025-12-09",
 	},
 	{
 		Name:              "Magistral Small 2509",
@@ -311,9 +465,11 @@ var models = []catalogueModel{
 		ModelID:           "mistral.magistral-small-2509",
 		InputContextLimit: 128_000,
 		SortOrder:         3,
-		Tags:              []string{"reasoning", "thinking"},
+		Tier:              "balanced",
+		ExtraTags:         []string{"open-source", "reasoning"},
 		Modalities:        []string{"text", "image"},
 		IsActive:          true,
+		ReleasedDate:      "2025-09-01",
 	},
 	{
 		Name:              "Ministral 3 14B",
@@ -322,9 +478,11 @@ var models = []catalogueModel{
 		ModelID:           "mistral.ministral-3-14b-instruct",
 		InputContextLimit: 128_000,
 		SortOrder:         4,
-		Tags:              []string{"balanced", "lightweight"},
+		Tier:              "lightweight",
+		ExtraTags:         []string{"open-source"},
 		Modalities:        []string{"text", "image"},
 		IsActive:          true,
+		ReleasedDate:      "2025-12-02",
 	},
 	{
 		Name:              "Ministral 3 8B",
@@ -333,9 +491,11 @@ var models = []catalogueModel{
 		ModelID:           "mistral.ministral-3-8b-instruct",
 		InputContextLimit: 128_000,
 		SortOrder:         5,
-		Tags:              []string{"lightweight", "cost-efficient"},
+		Tier:              "lightweight",
+		ExtraTags:         []string{"open-source"},
 		Modalities:        []string{"text", "image"},
 		IsActive:          true,
+		ReleasedDate:      "2025-12-02",
 	},
 	{
 		Name:              "Ministral 3 3B",
@@ -344,9 +504,11 @@ var models = []catalogueModel{
 		ModelID:           "mistral.ministral-3-3b-instruct",
 		InputContextLimit: 128_000,
 		SortOrder:         6,
-		Tags:              []string{"lightweight", "fast", "cost-efficient"},
+		Tier:              "lightweight",
+		ExtraTags:         []string{"open-source", "fast"},
 		Modalities:        []string{"text", "image"},
 		IsActive:          true,
+		ReleasedDate:      "2025-12-02",
 	},
 	{
 		Name:              "Voxtral Small 24B",
@@ -355,9 +517,11 @@ var models = []catalogueModel{
 		ModelID:           "mistral.voxtral-small-24b-2507",
 		InputContextLimit: 32_000,
 		SortOrder:         7,
-		Tags:              []string{"balanced", "audio"},
+		Tier:              "balanced",
+		ExtraTags:         []string{"open-source"},
 		Modalities:        []string{"text", "audio"},
 		IsActive:          true,
+		ReleasedDate:      "2025-07-15",
 	},
 	{
 		Name:              "Voxtral Mini 3B",
@@ -366,9 +530,11 @@ var models = []catalogueModel{
 		ModelID:           "mistral.voxtral-mini-3b-2507",
 		InputContextLimit: 32_000,
 		SortOrder:         8,
-		Tags:              []string{"lightweight", "fast", "cost-efficient", "audio"},
+		Tier:              "lightweight",
+		ExtraTags:         []string{"open-source", "fast"},
 		Modalities:        []string{"text", "audio"},
 		IsActive:          true,
+		ReleasedDate:      "2025-07-15",
 	},
 	{
 		Name:              "Pixtral Large",
@@ -377,9 +543,11 @@ var models = []catalogueModel{
 		ModelID:           "arn:aws:bedrock:us-east-1:471112741644:inference-profile/us.mistral.pixtral-large-2502-v1:0",
 		InputContextLimit: 128_000,
 		SortOrder:         9,
-		Tags:              []string{"flagship", "vision"},
+		Tier:              "flagship",
+		ExtraTags:         []string{"open-source"},
 		Modalities:        []string{"text", "image"},
 		IsActive:          true,
+		ReleasedDate:      "2024-11-18",
 	},
 	{
 		Name:              "Mistral Large 2402",
@@ -388,9 +556,11 @@ var models = []catalogueModel{
 		ModelID:           "mistral.mistral-large-2402-v1:0",
 		InputContextLimit: 32_000,
 		SortOrder:         10,
-		Tags:              []string{"flagship", "reasoning"},
+		Tier:              "flagship",
+		ExtraTags:         nil,
 		Modalities:        []string{"text"},
 		IsActive:          true,
+		ReleasedDate:      "2024-02-26",
 	},
 	{
 		Name:              "Mistral Small 2402",
@@ -399,9 +569,11 @@ var models = []catalogueModel{
 		ModelID:           "mistral.mistral-small-2402-v1:0",
 		InputContextLimit: 32_000,
 		SortOrder:         11,
-		Tags:              []string{"fast", "cost-efficient"},
+		Tier:              "balanced",
+		ExtraTags:         []string{"fast"},
 		Modalities:        []string{"text"},
 		IsActive:          true,
+		ReleasedDate:      "2024-02-26",
 	},
 	{
 		Name:              "Mixtral 8x7B Instruct",
@@ -410,9 +582,11 @@ var models = []catalogueModel{
 		ModelID:           "mistral.mixtral-8x7b-instruct-v0:1",
 		InputContextLimit: 32_000,
 		SortOrder:         12,
-		Tags:              []string{"balanced", "open-source"},
+		Tier:              "balanced",
+		ExtraTags:         []string{"open-source"},
 		Modalities:        []string{"text"},
 		IsActive:          true,
+		ReleasedDate:      "2023-12-11",
 	},
 	{
 		Name:              "Mistral 7B Instruct",
@@ -421,9 +595,11 @@ var models = []catalogueModel{
 		ModelID:           "mistral.mistral-7b-instruct-v0:2",
 		InputContextLimit: 32_000,
 		SortOrder:         13,
-		Tags:              []string{"lightweight", "open-source", "cost-efficient"},
+		Tier:              "lightweight",
+		ExtraTags:         []string{"open-source", "fast"},
 		Modalities:        []string{"text"},
 		IsActive:          true,
+		ReleasedDate:      "2023-09-27",
 	},
 	{
 		Name:              "Gemma 3 27B",
@@ -432,9 +608,11 @@ var models = []catalogueModel{
 		ModelID:           "google.gemma-3-27b-it",
 		InputContextLimit: 128_000,
 		SortOrder:         1,
-		Tags:              []string{"flagship", "open-source", "balanced"},
+		Tier:              "flagship",
+		ExtraTags:         []string{"open-source"},
 		Modalities:        []string{"text", "image"},
 		IsActive:          true,
+		ReleasedDate:      "2025-03-12",
 	},
 	{
 		Name:              "Gemma 3 12B",
@@ -443,9 +621,11 @@ var models = []catalogueModel{
 		ModelID:           "google.gemma-3-12b-it",
 		InputContextLimit: 128_000,
 		SortOrder:         2,
-		Tags:              []string{"balanced", "open-source"},
+		Tier:              "balanced",
+		ExtraTags:         []string{"open-source"},
 		Modalities:        []string{"text", "image"},
 		IsActive:          true,
+		ReleasedDate:      "2025-03-12",
 	},
 	{
 		Name:              "Gemma 3 4B",
@@ -454,9 +634,11 @@ var models = []catalogueModel{
 		ModelID:           "google.gemma-3-4b-it",
 		InputContextLimit: 128_000,
 		SortOrder:         3,
-		Tags:              []string{"lightweight", "open-source", "fast", "cost-efficient"},
+		Tier:              "lightweight",
+		ExtraTags:         []string{"open-source", "fast"},
 		Modalities:        []string{"text", "image"},
 		IsActive:          true,
+		ReleasedDate:      "2025-03-12",
 	},
 	{
 		Name:              "Llama 4 Maverick 17B",
@@ -465,9 +647,11 @@ var models = []catalogueModel{
 		ModelID:           "arn:aws:bedrock:us-east-1:471112741644:inference-profile/us.meta.llama4-maverick-17b-instruct-v1:0",
 		InputContextLimit: 1_000_000,
 		SortOrder:         1,
-		Tags:              []string{"flagship", "balanced", "long-context"},
+		Tier:              "flagship",
+		ExtraTags:         []string{"open-source"},
 		Modalities:        []string{"text", "image"},
 		IsActive:          true,
+		ReleasedDate:      "2025-04-05",
 	},
 	{
 		Name:              "Llama 4 Scout 17B",
@@ -476,9 +660,11 @@ var models = []catalogueModel{
 		ModelID:           "arn:aws:bedrock:us-east-1:471112741644:inference-profile/us.meta.llama4-scout-17b-instruct-v1:0",
 		InputContextLimit: 3_500_000,
 		SortOrder:         2,
-		Tags:              []string{"long-context", "cost-efficient"},
+		Tier:              "balanced",
+		ExtraTags:         []string{"open-source"},
 		Modalities:        []string{"text", "image"},
 		IsActive:          true,
+		ReleasedDate:      "2025-04-05",
 	},
 	{
 		Name:              "Llama 3.3 70B",
@@ -487,9 +673,11 @@ var models = []catalogueModel{
 		ModelID:           "arn:aws:bedrock:us-east-1:471112741644:inference-profile/us.meta.llama3-3-70b-instruct-v1:0",
 		InputContextLimit: 128_000,
 		SortOrder:         3,
-		Tags:              []string{"balanced", "reasoning"},
+		Tier:              "balanced",
+		ExtraTags:         []string{"open-source"},
 		Modalities:        []string{"text"},
 		IsActive:          true,
+		ReleasedDate:      "2024-12-06",
 	},
 	{
 		Name:              "Llama 3.1 70B",
@@ -498,9 +686,11 @@ var models = []catalogueModel{
 		ModelID:           "arn:aws:bedrock:us-east-1:471112741644:inference-profile/us.meta.llama3-1-70b-instruct-v1:0",
 		InputContextLimit: 128_000,
 		SortOrder:         4,
-		Tags:              []string{"balanced"},
+		Tier:              "balanced",
+		ExtraTags:         []string{"open-source"},
 		Modalities:        []string{"text"},
 		IsActive:          true,
+		ReleasedDate:      "2024-07-23",
 	},
 	{
 		Name:              "Llama 3.1 8B",
@@ -509,9 +699,11 @@ var models = []catalogueModel{
 		ModelID:           "arn:aws:bedrock:us-east-1:471112741644:inference-profile/us.meta.llama3-1-8b-instruct-v1:0",
 		InputContextLimit: 128_000,
 		SortOrder:         5,
-		Tags:              []string{"lightweight", "fast", "cost-efficient"},
+		Tier:              "lightweight",
+		ExtraTags:         []string{"open-source", "fast"},
 		Modalities:        []string{"text"},
 		IsActive:          true,
+		ReleasedDate:      "2024-07-23",
 	},
 	{
 		Name:              "Llama 3 70B",
@@ -520,9 +712,11 @@ var models = []catalogueModel{
 		ModelID:           "meta.llama3-70b-instruct-v1:0",
 		InputContextLimit: 8_000,
 		SortOrder:         6,
-		Tags:              []string{"balanced"},
+		Tier:              "balanced",
+		ExtraTags:         []string{"open-source"},
 		Modalities:        []string{"text"},
 		IsActive:          true,
+		ReleasedDate:      "2024-04-18",
 	},
 	{
 		Name:              "Llama 3 8B",
@@ -531,9 +725,11 @@ var models = []catalogueModel{
 		ModelID:           "meta.llama3-8b-instruct-v1:0",
 		InputContextLimit: 8_000,
 		SortOrder:         7,
-		Tags:              []string{"lightweight", "cost-efficient"},
+		Tier:              "lightweight",
+		ExtraTags:         []string{"open-source", "fast"},
 		Modalities:        []string{"text"},
 		IsActive:          true,
+		ReleasedDate:      "2024-04-18",
 	},
 	{
 		Name:              "MiniMax M2.5",
@@ -542,9 +738,11 @@ var models = []catalogueModel{
 		ModelID:           "minimax.minimax-m2.5",
 		InputContextLimit: 196_000,
 		SortOrder:         1,
-		Tags:              []string{"flagship", "agentic", "coding", "long-context"},
+		Tier:              "flagship",
+		ExtraTags:         []string{"open-source", "agentic", "coding"},
 		Modalities:        []string{"text"},
 		IsActive:          true,
+		ReleasedDate:      "2026-02-12",
 	},
 	{
 		Name:              "MiniMax M2.1",
@@ -553,9 +751,11 @@ var models = []catalogueModel{
 		ModelID:           "minimax.minimax-m2.1",
 		InputContextLimit: 196_000,
 		SortOrder:         2,
-		Tags:              []string{"agentic", "coding", "long-context"},
+		Tier:              "balanced",
+		ExtraTags:         []string{"open-source", "agentic", "coding"},
 		Modalities:        []string{"text"},
 		IsActive:          true,
+		ReleasedDate:      "2025-12-22",
 	},
 	{
 		Name:              "MiniMax M2",
@@ -564,9 +764,11 @@ var models = []catalogueModel{
 		ModelID:           "minimax.minimax-m2",
 		InputContextLimit: 1_000_000,
 		SortOrder:         3,
-		Tags:              []string{"agentic", "coding", "long-context"},
+		Tier:              "lightweight",
+		ExtraTags:         []string{"open-source", "agentic", "coding"},
 		Modalities:        []string{"text"},
 		IsActive:          true,
+		ReleasedDate:      "2025-10-27",
 	},
 	{
 		Name:              "Qwen3 Coder Next",
@@ -575,9 +777,11 @@ var models = []catalogueModel{
 		ModelID:           "qwen.qwen3-coder-next",
 		InputContextLimit: 256_000,
 		SortOrder:         1,
-		Tags:              []string{"flagship", "coding", "agentic", "long-context"},
+		Tier:              "flagship",
+		ExtraTags:         []string{"open-source", "coding", "agentic"},
 		Modalities:        []string{"text"},
 		IsActive:          true,
+		ReleasedDate:      "2026-02-03",
 	},
 	{
 		Name:              "Qwen3 VL 235B A22B",
@@ -586,9 +790,11 @@ var models = []catalogueModel{
 		ModelID:           "qwen.qwen3-vl-235b-a22b",
 		InputContextLimit: 256_000,
 		SortOrder:         2,
-		Tags:              []string{"flagship", "vision", "long-context"},
+		Tier:              "flagship",
+		ExtraTags:         []string{"open-source"},
 		Modalities:        []string{"text", "image"},
 		IsActive:          true,
+		ReleasedDate:      "2025-09-23",
 	},
 	{
 		Name:              "Qwen3 Next 80B A3B",
@@ -597,9 +803,11 @@ var models = []catalogueModel{
 		ModelID:           "qwen.qwen3-next-80b-a3b",
 		InputContextLimit: 256_000,
 		SortOrder:         3,
-		Tags:              []string{"balanced", "reasoning", "long-context"},
+		Tier:              "balanced",
+		ExtraTags:         []string{"open-source", "reasoning"},
 		Modalities:        []string{"text"},
 		IsActive:          true,
+		ReleasedDate:      "2025-09-11",
 	},
 	{
 		Name:              "Qwen3 Coder 30B A3B",
@@ -608,9 +816,11 @@ var models = []catalogueModel{
 		ModelID:           "qwen.qwen3-coder-30b-a3b-v1:0",
 		InputContextLimit: 256_000,
 		SortOrder:         4,
-		Tags:              []string{"coding", "long-context", "cost-efficient"},
+		Tier:              "balanced",
+		ExtraTags:         []string{"open-source", "coding"},
 		Modalities:        []string{"text"},
 		IsActive:          true,
+		ReleasedDate:      "2025-07-22",
 	},
 	{
 		Name:              "Qwen3 32B",
@@ -619,9 +829,11 @@ var models = []catalogueModel{
 		ModelID:           "qwen.qwen3-32b-v1:0",
 		InputContextLimit: 32_000,
 		SortOrder:         5,
-		Tags:              []string{"reasoning", "thinking", "balanced"},
+		Tier:              "lightweight",
+		ExtraTags:         []string{"open-source", "reasoning"},
 		Modalities:        []string{"text"},
 		IsActive:          true,
+		ReleasedDate:      "2025-04-28",
 	},
 }
 
@@ -716,13 +928,26 @@ func main() {
 		log.Printf("deleted %d existing %s row(s)", n, vendor)
 	}
 
+	costEfficient := costEfficientSet(models, prices)
+
 	const sql = `
-		INSERT INTO model_catalogue (name, slug, vendor, provider, model_id, input_context_limit, sort_order, tags, modalities, is_active)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		INSERT INTO model_catalogue (name, slug, vendor, provider, model_id, input_context_limit, sort_order, tags, modalities, is_active, model_released_date)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		RETURNING id, name, vendor, sort_order
 	`
 
 	for _, model := range models {
+		var releasedDate *time.Time
+		if model.ReleasedDate != "" {
+			parsed, err := time.Parse("2006-01-02", model.ReleasedDate)
+			if err != nil {
+				log.Fatalf("bad released date for %s: %v", model.Name, err)
+			}
+			releasedDate = &parsed
+		}
+
+		tags := buildTags(model, costEfficient[model.Name])
+
 		var id, name, vendor string
 		var sortOrder int
 		err := db.DB().QueryRowContext(
@@ -735,14 +960,15 @@ func main() {
 			model.ModelID,
 			model.InputContextLimit,
 			model.SortOrder,
-			pq.Array(model.Tags),
+			pq.Array(tags),
 			pq.Array(model.Modalities),
 			model.IsActive,
+			releasedDate,
 		).Scan(&id, &name, &vendor, &sortOrder)
 		if err != nil {
 			log.Fatalf("insert %s: %v", model.Name, err)
 		}
-		log.Printf("inserted %s [%s #%d] → %s", name, vendor, sortOrder, id)
+		log.Printf("inserted %s [%s #%d] tags=%v → %s", name, vendor, sortOrder, tags, id)
 
 		price, ok := prices[model.Name]
 		if !ok {

@@ -91,7 +91,7 @@ func (c *Controller) formatBufferedResponse(ctx context.Context, w http.Response
 }
 
 func (c *Controller) ListModels(w http.ResponseWriter, r *http.Request) {
-	models, err := c.catalogue.ListActive(r.Context(), "")
+	models, err := c.catalogue.ListActive(r.Context(), "", "")
 	if err != nil {
 		logger.Error(r.Context(), "openai/models: list failed", "error", err)
 		openaiCompat.WriteError(w, http.StatusInternalServerError, "api_error", "failed to list models")
