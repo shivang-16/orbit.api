@@ -20,6 +20,7 @@ type Config struct {
 	AWS              AWS
 	SQS              SQS
 	Dodo             Dodo
+	Resend           Resend
 	RateLimits       RateLimits
 	Credits          Credits
 	Server           Server
@@ -51,6 +52,11 @@ type Dodo struct {
 	APIKey     string
 	Env        string
 	WebhookKey string
+}
+
+type Resend struct {
+	APIKey    string
+	FromEmail string
 }
 
 type AWS struct {
@@ -117,6 +123,10 @@ func Load() Config {
 			APIKey:     env("DODO_PAYMENTS_API_KEY", ""),
 			Env:        env("DODO_ENV", "test"),
 			WebhookKey: env("DODO_WEBHOOK_KEY", ""),
+		},
+		Resend: Resend{
+			APIKey:    env("RESEND_API_KEY", ""),
+			FromEmail: env("RESEND_FROM_EMAIL", "Shivang Yadav <hi@tryorbit.cloud>"),
 		},
 		RateLimits: file.RateLimits,
 		Credits:    file.Credits,

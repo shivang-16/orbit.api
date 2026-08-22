@@ -22,6 +22,7 @@ import (
 	"github.com/shivang-16/orbit.api/internal/infra/clerk"
 	"github.com/shivang-16/orbit.api/internal/infra/dodo"
 	"github.com/shivang-16/orbit.api/internal/infra/postgres"
+	"github.com/shivang-16/orbit.api/internal/infra/resend"
 	"github.com/shivang-16/orbit.api/internal/infra/sqs"
 	apikeyMiddleware "github.com/shivang-16/orbit.api/internal/middleware/apikey"
 	apikeyRepository "github.com/shivang-16/orbit.api/internal/repositories/apikey"
@@ -41,6 +42,7 @@ import (
 	healthService "github.com/shivang-16/orbit.api/internal/services/health"
 	inferenceService "github.com/shivang-16/orbit.api/internal/services/inference"
 	invoicesService "github.com/shivang-16/orbit.api/internal/services/invoices"
+	mailService "github.com/shivang-16/orbit.api/internal/services/mail"
 	organizationService "github.com/shivang-16/orbit.api/internal/services/organization"
 	planService "github.com/shivang-16/orbit.api/internal/services/plan"
 	userService "github.com/shivang-16/orbit.api/internal/services/user"
@@ -65,9 +67,10 @@ func Start(ctx context.Context, cfg config.Config) {
 	billingPublisher := billingService.NewPublisher(sqsClient)
 
 	clerkClient := clerk.New(cfg.ClerkSecretKey)
+	mailSvc := mailService.NewService(resend.New(cfg))
 	userRepo := userRepository.NewRepository(db.DB())
 	orgRepo := organizationRepository.NewRepository(db.DB())
-	userSvc := userService.NewService(db.DB(), userRepo, orgRepo, clerkClient, cfg.Credits.SignupMicros)
+	userSvc := userService.NewService(db.DB(), userRepo, orgRepo, clerkClient, mailSvc, cfg.Credits.SignupMicros)
 	userCtrl := userController.NewController(userSvc)
 
 	catalogueRepo := catalogueRepository.NewRepository(db.DB())

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/shivang-16/orbit.api/internal/infra/clerk"
 	authMiddleware "github.com/shivang-16/orbit.api/internal/middleware/auth"
@@ -12,6 +13,7 @@ import (
 	billingRepository "github.com/shivang-16/orbit.api/internal/repositories/billing"
 	organizationRepository "github.com/shivang-16/orbit.api/internal/repositories/organization"
 	userRepository "github.com/shivang-16/orbit.api/internal/repositories/user"
+	mailService "github.com/shivang-16/orbit.api/internal/services/mail"
 )
 
 type Service struct {
@@ -19,6 +21,7 @@ type Service struct {
 	users         *userRepository.Repository
 	orgs          *organizationRepository.Repository
 	clerk         *clerk.Client
+	mail          *mailService.Service
 	signupCredits int64
 }
 
@@ -27,9 +30,10 @@ func NewService(
 	users *userRepository.Repository,
 	orgs *organizationRepository.Repository,
 	clerkClient *clerk.Client,
+	mail *mailService.Service,
 	signupCredits int64,
 ) *Service {
-	return &Service{db: db, users: users, orgs: orgs, clerk: clerkClient, signupCredits: signupCredits}
+	return &Service{db: db, users: users, orgs: orgs, clerk: clerkClient, mail: mail, signupCredits: signupCredits}
 }
 
 func (s *Service) Sync(ctx context.Context) (*model.User, bool, error) {
@@ -65,7 +69,26 @@ func (s *Service) Sync(ctx context.Context) (*model.User, bool, error) {
 		return nil, false, fmt.Errorf("create user %s: %w", userID, err)
 	}
 
+	s.sendWelcome(created)
 	return created, true, nil
+}
+
+func (s *Service) sendWelcome(user *model.User) {
+	if s.mail == nil || user == nil {
+		return
+	}
+	go s.mail.SendWelcome(context.Background(), user.Email, firstName(user.Name))
+}
+
+func firstName(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	if i := strings.IndexByte(name, ' '); i > 0 {
+		return name[:i]
+	}
+	return name
 }
 
 func (s *Service) createUserWithDefaultOrg(ctx context.Context, user *model.User) (*model.User, error) {
