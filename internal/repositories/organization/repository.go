@@ -195,6 +195,47 @@ func (r *Repository) SetPlanSlugIfHigher(ctx context.Context, organizationID, pl
 	return nil
 }
 
+func (r *Repository) GetDodoSubscriptionID(ctx context.Context, organizationID string) (string, error) {
+	var subscriptionID string
+	err := r.db.QueryRowContext(
+		ctx,
+		`SELECT dodo_subscription_id FROM organizations WHERE id = $1`,
+		organizationID,
+	).Scan(&subscriptionID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(subscriptionID), nil
+}
+
+func (r *Repository) SetDodoSubscriptionID(ctx context.Context, organizationID, subscriptionID string) error {
+	organizationID = strings.TrimSpace(organizationID)
+	subscriptionID = strings.TrimSpace(subscriptionID)
+	if organizationID == "" || subscriptionID == "" {
+		return nil
+	}
+	result, err := r.db.ExecContext(
+		ctx,
+		`UPDATE organizations SET dodo_subscription_id = $2 WHERE id = $1`,
+		organizationID,
+		subscriptionID,
+	)
+	if err != nil {
+		return err
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if updated == 0 {
+		return fmt.Errorf("organization %s not found", organizationID)
+	}
+	return nil
+}
+
 func (r *Repository) create(ctx context.Context, name, description, userID, slug string) (*model.Organization, error) {
 	org := model.Organization{}
 	var planSlug sql.NullString

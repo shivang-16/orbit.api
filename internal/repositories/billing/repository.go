@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -160,6 +161,20 @@ type GrantParams struct {
 	AmountMicros   int64
 	IdempotencyKey string
 	Note           string
+}
+
+func (r *Repository) HasIdempotencyKey(ctx context.Context, key string) (bool, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return false, nil
+	}
+	var exists bool
+	err := r.db.QueryRowContext(
+		ctx,
+		`SELECT EXISTS(SELECT 1 FROM credit_ledger WHERE idempotency_key = $1)`,
+		key,
+	).Scan(&exists)
+	return exists, err
 }
 
 // GrantCredits adds a positive ledger entry (plan purchase, top-up, manual

@@ -3,6 +3,7 @@ package invoice
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -127,6 +128,79 @@ func (r *Repository) CountByOrg(ctx context.Context, organizationID string) (int
 		organizationID,
 	).Scan(&total)
 	return total, err
+}
+
+type SubscriptionRef struct {
+	ID       string
+	PlanSlug string
+}
+
+func (r *Repository) SubscriptionsForOrg(ctx context.Context, organizationID string) ([]SubscriptionRef, error) {
+	organizationID = strings.TrimSpace(organizationID)
+	if organizationID == "" {
+		return nil, nil
+	}
+	rows, err := r.db.QueryContext(
+		ctx,
+		`SELECT DISTINCT ON (subscription_id) subscription_id, plan_slug
+		 FROM invoices
+		 WHERE organization_id = $1 AND subscription_id <> ''
+		 ORDER BY subscription_id, paid_at DESC`,
+		organizationID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]SubscriptionRef, 0)
+	for rows.Next() {
+		var ref SubscriptionRef
+		if err := rows.Scan(&ref.ID, &ref.PlanSlug); err != nil {
+			return nil, err
+		}
+		ref.ID = strings.TrimSpace(ref.ID)
+		ref.PlanSlug = strings.TrimSpace(ref.PlanSlug)
+		if ref.ID != "" {
+			out = append(out, ref)
+		}
+	}
+	return out, rows.Err()
+}
+
+func (r *Repository) SubscriptionIDsForOrg(ctx context.Context, organizationID string) ([]string, error) {
+	refs, err := r.SubscriptionsForOrg(ctx, organizationID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		out = append(out, ref.ID)
+	}
+	return out, nil
+}
+
+func (r *Repository) LatestSubscriptionID(ctx context.Context, organizationID string) (string, error) {
+	organizationID = strings.TrimSpace(organizationID)
+	if organizationID == "" {
+		return "", nil
+	}
+	var subscriptionID string
+	err := r.db.QueryRowContext(
+		ctx,
+		`SELECT subscription_id FROM invoices
+		 WHERE organization_id = $1 AND subscription_id <> ''
+		 ORDER BY paid_at DESC
+		 LIMIT 1`,
+		organizationID,
+	).Scan(&subscriptionID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(subscriptionID), nil
 }
 
 func (r *Repository) GetByPayment(ctx context.Context, paymentID string) (*model.Invoice, error) {

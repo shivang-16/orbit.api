@@ -11,6 +11,7 @@ import (
 	"github.com/shivang-16/orbit.api/internal/infra/clerk"
 	"github.com/shivang-16/orbit.api/internal/infra/dodo"
 	authMiddleware "github.com/shivang-16/orbit.api/internal/middleware/auth"
+	"github.com/shivang-16/orbit.api/internal/model"
 	organizationRepository "github.com/shivang-16/orbit.api/internal/repositories/organization"
 	planRepository "github.com/shivang-16/orbit.api/internal/repositories/plan"
 )
@@ -20,6 +21,8 @@ var (
 	ErrNoOrganization = errors.New("no organization")
 	ErrForbidden      = errors.New("forbidden")
 	ErrPlanNotFound   = errors.New("plan not found")
+	ErrSamePlan       = errors.New("already on this plan")
+	ErrDowngrade      = errors.New("downgrade not supported")
 )
 
 type Service struct {
@@ -63,6 +66,35 @@ func (s *Service) CreateCheckout(ctx context.Context, req CreateCheckoutRequest)
 		return nil, ErrPlanNotFound
 	}
 
+	if err := s.guardPlanChange(ctx, orgID, plan); err != nil {
+		return nil, err
+	}
+
+	// Upgrades always go through hosted checkout so Dodo charges now and
+	// the customer authorizes a new mandate at the higher plan amount.
+	// In-place change-plan cannot raise an INR e-mandate, so Trial → Starter
+	// would fail or wait until the next cycle. The old subscription is
+	// cancelled when the new one becomes active.
+	return s.createHostedCheckout(ctx, userID, orgID, plan)
+}
+
+func (s *Service) guardPlanChange(ctx context.Context, orgID string, target *model.Plan) error {
+	org, err := s.orgs.GetByID(ctx, orgID)
+	if err != nil {
+		return fmt.Errorf("load organization: %w", err)
+	}
+	if org == nil || strings.TrimSpace(org.PlanSlug) == "" {
+		return nil
+	}
+
+	current, err := s.plans.GetBySlug(ctx, org.PlanSlug)
+	if err != nil {
+		return fmt.Errorf("load current plan: %w", err)
+	}
+	return planChangeError(current, target)
+}
+
+func (s *Service) createHostedCheckout(ctx context.Context, userID, orgID string, plan *model.Plan) (*CreateCheckoutResponse, error) {
 	profile, err := s.clerk.GetProfile(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("load user profile: %w", err)
@@ -71,7 +103,7 @@ func (s *Service) CreateCheckout(ctx context.Context, req CreateCheckoutRequest)
 	frontendURL := strings.TrimRight(s.config.FrontendURL, "/")
 	params := dodo.CreateCheckoutSessionParams{
 		ProductCart: []dodo.CartItem{{ProductID: plan.DodoProductID, Quantity: 1}},
-		ReturnURL:   frontendURL + "/dashboard?checkout_success=1&plan=" + plan.Slug,
+		ReturnURL:   frontendURL + "/billing/credits?checkout_success=1&plan=" + plan.Slug,
 		Customer:    &dodo.Customer{Email: profile.Email},
 		Metadata: map[string]string{
 			"organization_id": orgID,
@@ -89,7 +121,7 @@ func (s *Service) CreateCheckout(ctx context.Context, req CreateCheckoutRequest)
 		return nil, fmt.Errorf("create checkout session: %w", err)
 	}
 
-	return &CreateCheckoutResponse{CheckoutURL: session.CheckoutURL}, nil
+	return &CreateCheckoutResponse{CheckoutURL: session.CheckoutURL, PlanSlug: plan.Slug}, nil
 }
 
 func (s *Service) orgIDForUser(ctx context.Context, userID, organizationID string) (string, error) {

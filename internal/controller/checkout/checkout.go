@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/shivang-16/orbit.api/internal/logger"
 	checkoutService "github.com/shivang-16/orbit.api/internal/services/checkout"
@@ -27,6 +28,10 @@ func (c *Controller) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.OrganizationID == "" {
+		req.OrganizationID = strings.TrimSpace(r.Header.Get("X-Organization-Id"))
+	}
+
 	resp, err := c.service.CreateCheckout(r.Context(), req)
 	if err != nil {
 		logger.Error(r.Context(), "checkout/create failed", "plan", req.PlanSlug, "org_id", req.OrganizationID, "error", err)
@@ -47,6 +52,13 @@ func writeServiceError(w http.ResponseWriter, err error) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "no organization"})
 	case errors.Is(err, checkoutService.ErrForbidden):
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "not a member of this organization"})
+	case errors.Is(err, checkoutService.ErrSamePlan):
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "You are already on this plan.", "code": "same_plan"})
+	case errors.Is(err, checkoutService.ErrDowngrade):
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "Downgrades are not supported. Contact support if you need to change plans.",
+			"code":  "downgrade_not_supported",
+		})
 	default:
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create checkout session"})
 	}
