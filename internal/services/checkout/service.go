@@ -69,7 +69,7 @@ func (s *Service) CreateCheckout(ctx context.Context, req CreateCheckoutRequest)
 	}
 
 	frontendURL := strings.TrimRight(s.config.FrontendURL, "/")
-	session, err := s.dodo.CreateCheckoutSession(ctx, dodo.CreateCheckoutSessionParams{
+	params := dodo.CreateCheckoutSessionParams{
 		ProductCart: []dodo.CartItem{{ProductID: plan.DodoProductID, Quantity: 1}},
 		ReturnURL:   frontendURL + "/dashboard?checkout_success=1&plan=" + plan.Slug,
 		Customer:    &dodo.Customer{Email: profile.Email},
@@ -79,7 +79,12 @@ func (s *Service) CreateCheckout(ctx context.Context, req CreateCheckoutRequest)
 			"plan_slug":       plan.Slug,
 			"credits_micros":  strconv.FormatInt(plan.CreditsMicros, 10),
 		},
-	})
+	}
+	if mandate := mandateMinAmountInrPaise(plan.PriceMicros); mandate > 0 {
+		params.MandateMinAmountInrPaise = &mandate
+	}
+
+	session, err := s.dodo.CreateCheckoutSession(ctx, params)
 	if err != nil {
 		return nil, fmt.Errorf("create checkout session: %w", err)
 	}

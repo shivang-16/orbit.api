@@ -46,6 +46,9 @@ type CreateCheckoutSessionParams struct {
 	ReturnURL   string            `json:"return_url,omitempty"`
 	Customer    *Customer         `json:"customer,omitempty"`
 	Metadata    map[string]string `json:"metadata,omitempty"`
+	// MandateMinAmountInrPaise overrides Dodo's ₹15,000 INR e-mandate floor
+	// so Indian-card renewals authorize near the actual plan charge.
+	MandateMinAmountInrPaise *int `json:"mandate_min_amount_inr_paise,omitempty"`
 }
 
 type CheckoutSession struct {
