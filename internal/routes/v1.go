@@ -54,12 +54,12 @@ func registerV1(
 		r.Get("/health", health.Check)
 		r.Get("/ready", health.Ready)
 		r.Get("/plans", plans.List)
+		r.Get("/catalogue", catalogue.List)
 		r.Post("/webhooks/dodo", webhooks.Dodo)
 
 		r.Group(func(r chi.Router) {
 			r.Use(clerkAuth.Clerk)
 			r.Post("/users/sync", users.Sync)
-			r.Get("/catalogue", catalogue.List)
 			r.Get("/catalogue/overview", catalogue.Overview)
 			r.Get("/catalogue/{id}", catalogue.Get)
 			r.Get("/api-keys", apiKeys.List)
