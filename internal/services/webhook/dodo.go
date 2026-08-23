@@ -148,10 +148,7 @@ func (s *DodoService) handleSubscriptionGrant(ctx context.Context, eventType str
 		return err
 	}
 	if action == persistIgnoreStale || action == persistDefer {
-		if err := s.recordSubscriptionInvoice(ctx, orgID, planSlug, obj); err != nil {
-			return err
-		}
-		if err := s.persistSubscription(ctx, orgID, subscriptionID, planSlug, previousPlanSlug); err != nil {
+		if err := s.finishSubscription(ctx, orgID, subscriptionID, planSlug, previousPlanSlug, obj); err != nil {
 			return err
 		}
 		if action == persistDefer {
@@ -190,23 +187,29 @@ func (s *DodoService) handleSubscriptionGrant(ctx context.Context, eventType str
 		if err := s.attachPlan(ctx, orgID, planSlug); err != nil {
 			return err
 		}
-		if err := s.recordSubscriptionInvoice(ctx, orgID, planSlug, obj); err != nil {
-			return err
-		}
-		if err := s.persistSubscription(ctx, orgID, subscriptionID, planSlug, previousPlanSlug); err != nil {
+		if err := s.finishSubscription(ctx, orgID, subscriptionID, planSlug, previousPlanSlug, obj); err != nil {
 			return err
 		}
 		logger.Infof(ctx, "dodo webhook: %s granted %d micros to org %s (plan=%s, key=%s)", eventType, creditsMicros, orgID, planSlug, idempotencyKey)
 		return nil
 	}
 
-	if err := s.recordSubscriptionInvoice(ctx, orgID, planSlug, obj); err != nil {
-		return err
-	}
-	if err := s.persistSubscription(ctx, orgID, subscriptionID, planSlug, previousPlanSlug); err != nil {
+	if err := s.finishSubscription(ctx, orgID, subscriptionID, planSlug, previousPlanSlug, obj); err != nil {
 		return err
 	}
 	logger.Infof(ctx, "dodo webhook: %s persisted subscription %s for org %s (plan=%s) — no credits to grant", eventType, subscriptionID, orgID, planSlug)
+	return nil
+}
+
+// finishSubscription stores the live mandate and cancels leftovers first so a
+// later invoice-enrich failure cannot leave dodo_subscription_id blank.
+func (s *DodoService) finishSubscription(ctx context.Context, orgID, subscriptionID, planSlug, previousPlan string, obj dodoObject) error {
+	if err := s.persistSubscription(ctx, orgID, subscriptionID, planSlug, previousPlan); err != nil {
+		return err
+	}
+	if err := s.recordSubscriptionInvoice(ctx, orgID, planSlug, obj); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -227,9 +230,6 @@ func (s *DodoService) handlePaymentSucceeded(ctx context.Context, raw json.RawMe
 		if orgID == "" {
 			orgID = s.orgIDFromPayment(ctx, obj)
 		}
-		if err := s.recordInvoice(ctx, orgID, planSlug, obj); err != nil {
-			return err
-		}
 		previousPlanSlug := ""
 		if s.orgs != nil && orgID != "" {
 			if org, orgErr := s.orgs.GetByID(ctx, orgID); orgErr == nil && org != nil {
@@ -237,6 +237,9 @@ func (s *DodoService) handlePaymentSucceeded(ctx context.Context, raw json.RawMe
 			}
 		}
 		if err := s.persistSubscription(ctx, orgID, firstNonEmpty(obj.SubscriptionID), planSlug, previousPlanSlug); err != nil {
+			return err
+		}
+		if err := s.recordInvoice(ctx, orgID, planSlug, obj); err != nil {
 			return err
 		}
 		logger.Infof(ctx, "dodo webhook: payment.succeeded is a subscription charge — invoice saved, credits handled by subscription events")
@@ -510,7 +513,8 @@ func (s *DodoService) recordSubscriptionInvoice(ctx context.Context, orgID, plan
 
 	payment, err := s.dodo.LatestSubscriptionPayment(ctx, subscriptionID)
 	if err != nil {
-		return fmt.Errorf("load subscription payment %s: %w", subscriptionID, err)
+		logger.Infof(ctx, "dodo webhook: load subscription payment %s: %v — invoice deferred", subscriptionID, err)
+		return nil
 	}
 	if payment == nil {
 		logger.Infof(ctx, "dodo webhook: no succeeded payment for subscription %s yet", subscriptionID)
@@ -567,40 +571,37 @@ func (s *DodoService) recordInvoice(ctx context.Context, orgID, planSlug string,
 	paidAt := obj.CreatedAt
 
 	if amount <= 0 || invoiceID == "" || currency == "" {
-		if s.dodo == nil {
-			return fmt.Errorf("payment %s missing amount/invoice fields and no dodo client", paymentID)
-		}
-		payment, err := s.dodo.GetPayment(ctx, paymentID)
-		if err != nil {
-			return fmt.Errorf("enrich payment %s: %w", paymentID, err)
-		}
-		if payment == nil {
-			return fmt.Errorf("enrich payment %s: empty response", paymentID)
-		}
-		if invoiceID == "" {
-			invoiceID = strings.TrimSpace(payment.InvoiceID)
-		}
-		if amount <= 0 {
-			amount = payment.TotalAmount
-		}
-		if currency == "" {
-			currency = payment.Currency
-		}
-		if refundStatus == "" {
-			refundStatus = payment.RefundStatus
-		}
-		if subscriptionID == "" {
-			subscriptionID = payment.SubscriptionID
-		}
-		if paidAt.IsZero() && !payment.CreatedAt.IsZero() {
-			paidAt = payment.CreatedAt
-		}
-		if payment.Status != "" {
-			status = payment.Status
+		if s.dodo != nil {
+			payment, err := s.dodo.GetPayment(ctx, paymentID)
+			if err != nil {
+				logger.Infof(ctx, "dodo webhook: enrich payment %s: %v — saving what we have", paymentID, err)
+			} else if payment != nil {
+				if invoiceID == "" {
+					invoiceID = strings.TrimSpace(payment.InvoiceID)
+				}
+				if amount <= 0 {
+					amount = payment.TotalAmount
+				}
+				if currency == "" {
+					currency = payment.Currency
+				}
+				if refundStatus == "" {
+					refundStatus = payment.RefundStatus
+				}
+				if subscriptionID == "" {
+					subscriptionID = payment.SubscriptionID
+				}
+				if paidAt.IsZero() && !payment.CreatedAt.IsZero() {
+					paidAt = payment.CreatedAt
+				}
+				if payment.Status != "" {
+					status = payment.Status
+				}
+			}
 		}
 	}
-	if amount <= 0 {
-		return fmt.Errorf("payment %s has no amount after enrich", paymentID)
+	if currency == "" {
+		currency = "USD"
 	}
 
 	if err := s.invoices.Upsert(ctx, invoiceRepository.UpsertParams{
@@ -713,12 +714,11 @@ func (s *DodoService) persistSubscription(ctx context.Context, orgID, subscripti
 		return nil
 	}
 
-	if err := s.cancelPriorSubscriptions(ctx, orgID, stored, subscriptionID); err != nil {
-		return err
-	}
-
 	if err := s.orgs.SetDodoSubscriptionID(ctx, orgID, subscriptionID); err != nil {
 		return fmt.Errorf("store subscription %s on org %s: %w", subscriptionID, orgID, err)
+	}
+	if err := s.cancelPriorSubscriptions(ctx, orgID, stored, subscriptionID); err != nil {
+		return err
 	}
 	return nil
 }
