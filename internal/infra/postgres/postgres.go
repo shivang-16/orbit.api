@@ -17,18 +17,13 @@ type Client struct {
 
 func Open(cfg config.Postgres) (*Client, error) {
 	db, err := sql.Open("pgx", cfg.DSN())
-	if err != nil {
-		return nil, fmt.Errorf("open postgres: %w", err)
-	}
 
 	maxOpen := cfg.MaxOpenConns
 	if maxOpen < 1 {
 		maxOpen = 10
 	}
 	maxIdle := cfg.MaxIdleConns
-	if maxIdle < 1 {
-		maxIdle = 5
-	}
+	
 	db.SetMaxOpenConns(maxOpen)
 	db.SetMaxIdleConns(maxIdle)
 	db.SetConnMaxLifetime(time.Hour)
