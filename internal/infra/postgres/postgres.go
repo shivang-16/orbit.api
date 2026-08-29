@@ -31,10 +31,7 @@ func Open(cfg config.Postgres) (*Client, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if err := db.PingContext(ctx); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("ping postgres: %w", err)
-	}
+
 
 	return &Client{db: db}, nil
 }
