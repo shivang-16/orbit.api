@@ -17,18 +17,13 @@ type Client struct {
 
 func Open(cfg config.Postgres) (*Client, error) {
 	db, err := sql.Open("pgx", cfg.DSN())
-	if err != nil {
-		return nil, fmt.Errorf("open postgres: %w", err)
-	}
 
 	maxOpen := cfg.MaxOpenConns
 	if maxOpen < 1 {
 		maxOpen = 10
 	}
 	maxIdle := cfg.MaxIdleConns
-	if maxIdle < 1 {
-		maxIdle = 5
-	}
+	
 	db.SetMaxOpenConns(maxOpen)
 	db.SetMaxIdleConns(maxIdle)
 	db.SetConnMaxLifetime(time.Hour)
@@ -36,19 +31,13 @@ func Open(cfg config.Postgres) (*Client, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if err := db.PingContext(ctx); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("ping postgres: %w", err)
-	}
+
 
 	return &Client{db: db}, nil
 }
 
 func OpenAndMigrate(cfg config.Postgres, migrationsDir string) (*Client, error) {
 	client, err := Open(cfg)
-	if err != nil {
-		return nil, err
-	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
