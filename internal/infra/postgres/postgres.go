@@ -38,9 +38,6 @@ func Open(cfg config.Postgres) (*Client, error) {
 
 func OpenAndMigrate(cfg config.Postgres, migrationsDir string) (*Client, error) {
 	client, err := Open(cfg)
-	if err != nil {
-		return nil, err
-	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
