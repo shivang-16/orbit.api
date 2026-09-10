@@ -17,6 +17,7 @@ func TestUsesMantleResponses(t *testing.T) {
 		{"arn:aws:bedrock:us-east-1:471112741644:inference-profile/us.openai.gpt-5.6-sol", true},
 		{"arn:aws:bedrock:us-east-1:471112741644:inference-profile/us.openai.gpt-5.6-terra", true},
 		{"arn:aws:bedrock:us-east-1:471112741644:inference-profile/us.openai.gpt-5.6-luna", true},
+		{"arn:aws:bedrock:ap-south-1:471112741644:inference-profile/global.openai.gpt-6-astra", true},
 		{"us.openai.gpt-5.5", true},
 		{"openai.gpt-5.4", true},
 		{"openai.gpt-oss-120b-1:0", false},
@@ -38,6 +39,7 @@ func TestMantleModelID(t *testing.T) {
 		{"arn:aws:bedrock:us-east-1:471112741644:inference-profile/us.openai.gpt-5.6-sol", "openai.gpt-5.6-sol"},
 		{"us.openai.gpt-5.6-terra", "openai.gpt-5.6-terra"},
 		{"global.openai.gpt-5.6-luna", "openai.gpt-5.6-luna"},
+		{"arn:aws:bedrock:ap-south-1:471112741644:inference-profile/global.openai.gpt-6-astra", "openai.gpt-6-astra"},
 		{"openai.gpt-5.4", "openai.gpt-5.4"},
 	}
 	for _, tc := range cases {

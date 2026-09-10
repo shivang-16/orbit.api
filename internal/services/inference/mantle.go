@@ -8,15 +8,15 @@ import (
 )
 
 // usesMantleResponses reports whether this Bedrock model ID is an OpenAI
-// GPT-5.x frontier model. Those are served only on the Mantle Responses
-// API, not Converse / InvokeModel. GPT-OSS (and every other vendor) stay
-// on Converse.
+// GPT-5.x / GPT-6.x frontier model. Those are served only on the Mantle
+// Responses API, not Converse / InvokeModel. GPT-OSS (and every other
+// vendor) stay on Converse.
 func usesMantleResponses(modelID string) bool {
 	id := mantleModelID(modelID)
 	if strings.HasPrefix(id, "openai.gpt-oss") {
 		return false
 	}
-	return strings.HasPrefix(id, "openai.gpt-5")
+	return strings.HasPrefix(id, "openai.gpt-5") || strings.HasPrefix(id, "openai.gpt-6")
 }
 
 // mantleModelID turns a catalogue model_id (foundation id, geo inference

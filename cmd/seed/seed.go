@@ -147,6 +147,19 @@ func buildTags(m catalogueModel, costEfficient bool) []string {
 // is assembled.
 var models = []catalogueModel{
 	{
+		Name:              "Claude Fable 5.1",
+		Vendor:            "anthropic",
+		Provider:          "bedrock",
+		ModelID:           "arn:aws:bedrock:ap-south-1:471112741644:inference-profile/global.anthropic.claude-fable-5-1",
+		InputContextLimit: 1_000_000,
+		SortOrder:         0,
+		Tier:              "flagship",
+		ExtraTags:         []string{"reasoning", "coding", "agentic"},
+		Modalities:        []string{"text", "image"},
+		IsActive:          true,
+		ReleasedDate:      "2026-09-01",
+	},
+	{
 		Name:              "Claude Opus 5",
 		Vendor:            "anthropic",
 		Provider:          "bedrock",
@@ -275,6 +288,19 @@ var models = []catalogueModel{
 		Modalities:        []string{"text", "image"},
 		IsActive:          true,
 		ReleasedDate:      "2025-09-29",
+	},
+	{
+		Name:              "GPT 6 Astra",
+		Vendor:            "openai",
+		Provider:          "bedrock",
+		ModelID:           "arn:aws:bedrock:ap-south-1:471112741644:inference-profile/global.openai.gpt-6-astra",
+		InputContextLimit: 1_000_000,
+		SortOrder:         0,
+		Tier:              "flagship",
+		ExtraTags:         []string{"reasoning", "coding", "agentic"},
+		Modalities:        []string{"text", "image"},
+		IsActive:          true,
+		ReleasedDate:      "2026-09-08",
 	},
 	{
 		Name:              "GPT 5.6 Luna",
@@ -840,6 +866,7 @@ var models = []catalogueModel{
 // Source: AWS Bedrock on-demand pricing (us-east-1), Aug 2026.
 // https://aws.amazon.com/bedrock/pricing/
 var prices = map[string]modelPrice{
+	"Claude Fable 5.1":       {10_000_000, 50_000_000},
 	"Claude Opus 5":          {5_000_000, 25_000_000},
 	"Claude Sonnet 5":        {2_000_000, 10_000_000},
 	"Claude Fable 5":         {10_000_000, 50_000_000},
@@ -850,6 +877,7 @@ var prices = map[string]modelPrice{
 	"Claude Opus 4.5":        {5_000_000, 25_000_000},
 	"Claude Haiku 4.5":       {1_000_000, 5_000_000},
 	"Claude Sonnet 4.5":      {3_000_000, 15_000_000},
+	"GPT 6 Astra":            {11_000_000, 55_000_000},
 	"GPT 5.6 Luna":           {220_000, 1_320_000},
 	"GPT 5.6 Sol":            {5_500_000, 33_000_000},
 	"GPT 5.6 Terra":          {2_200_000, 13_200_000},
