@@ -17,7 +17,7 @@ func TestUsesMantleResponses(t *testing.T) {
 		{"arn:aws:bedrock:us-east-1:471112741644:inference-profile/us.openai.gpt-5.6-sol", true},
 		{"arn:aws:bedrock:us-east-1:471112741644:inference-profile/us.openai.gpt-5.6-terra", true},
 		{"arn:aws:bedrock:us-east-1:471112741644:inference-profile/us.openai.gpt-5.6-luna", true},
-		{"arn:aws:bedrock:ap-south-1:471112741644:inference-profile/global.openai.gpt-6-astra", true},
+		{"arn:aws:bedrock:us-east-1:471112741644:inference-profile/global.openai.gpt-6-astra", true},
 		{"us.openai.gpt-5.5", true},
 		{"openai.gpt-5.4", true},
 		{"openai.gpt-oss-120b-1:0", false},
@@ -45,6 +45,23 @@ func TestMantleModelID(t *testing.T) {
 	for _, tc := range cases {
 		if got := mantleModelID(tc.in); got != tc.want {
 			t.Errorf("mantleModelID(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestResponsesModelID(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"arn:aws:bedrock:us-east-1:471112741644:inference-profile/us.openai.gpt-5.6-sol", "openai.gpt-5.6-sol"},
+		{"arn:aws:bedrock:us-east-1:471112741644:inference-profile/global.openai.gpt-6-astra", "global.openai.gpt-6-astra"},
+		{"arn:aws:bedrock:ap-south-1:471112741644:inference-profile/global.openai.gpt-6-astra", "global.openai.gpt-6-astra"},
+		{"global.openai.gpt-6-astra", "global.openai.gpt-6-astra"},
+		{"us.openai.gpt-6-astra", "us.openai.gpt-6-astra"},
+	}
+	for _, tc := range cases {
+		if got := responsesModelID(tc.in); got != tc.want {
+			t.Errorf("responsesModelID(%q) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
 }

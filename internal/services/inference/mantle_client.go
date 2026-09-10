@@ -19,7 +19,7 @@ func (s *Service) callMantle(ctx context.Context, entry *model.ModelCatalogue, r
 		return nil, fmt.Errorf("encode mantle request: %w", err)
 	}
 	logger.Info(ctx, "inference: mantle responses",
-		"model", mantleModelID(entry.ModelID),
+		"model", responsesModelID(entry.ModelID),
 		"slug", entry.Slug,
 		"stream", req.Stream,
 	)
@@ -33,14 +33,18 @@ func (s *Service) callMantle(ctx context.Context, entry *model.ModelCatalogue, r
 	return s.mantleOnce(ctx, entry, payload)
 }
 
-func (s *Service) mantleEndpoint() string {
-	// GPT-5.x on mantle is served at /openai/v1/responses, not the
-	// default /v1/responses used by gpt-oss. See the Sol/Terra/Luna model cards.
+func (s *Service) mantleEndpoint(modelID string) string {
+	// GPT-5.x is served on bedrock-mantle. GPT-6 Astra's Global/Geo CRIS
+	// profiles are on bedrock-runtime's OpenAI Responses API; Mantle only
+	// has the in-region foundation id in us-west-2.
+	if isGPT6(modelID) {
+		return fmt.Sprintf("https://bedrock-runtime.%s.amazonaws.com/openai/v1/responses", s.bedrockRegion)
+	}
 	return fmt.Sprintf("https://bedrock-mantle.%s.api.aws/openai/v1/responses", s.bedrockRegion)
 }
 
 func (s *Service) mantleOnce(ctx context.Context, entry *model.ModelCatalogue, payload []byte) (*ChatResult, error) {
-	upstream, err := http.NewRequestWithContext(ctx, http.MethodPost, s.mantleEndpoint(), bytes.NewReader(payload))
+	upstream, err := http.NewRequestWithContext(ctx, http.MethodPost, s.mantleEndpoint(entry.ModelID), bytes.NewReader(payload))
 	if err != nil {
 		return nil, fmt.Errorf("build mantle request: %w", err)
 	}
@@ -101,7 +105,7 @@ func (s *Service) mantleOnce(ctx context.Context, entry *model.ModelCatalogue, p
 }
 
 func (s *Service) mantleStream(ctx context.Context, entry *model.ModelCatalogue, payload []byte, sink StreamSink, w http.ResponseWriter) (*ChatResult, error) {
-	upstream, err := http.NewRequestWithContext(ctx, http.MethodPost, s.mantleEndpoint(), bytes.NewReader(payload))
+	upstream, err := http.NewRequestWithContext(ctx, http.MethodPost, s.mantleEndpoint(entry.ModelID), bytes.NewReader(payload))
 	if err != nil {
 		return nil, fmt.Errorf("build mantle request: %w", err)
 	}

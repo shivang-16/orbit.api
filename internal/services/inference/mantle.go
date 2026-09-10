@@ -8,7 +8,7 @@ import (
 )
 
 // usesMantleResponses reports whether this Bedrock model ID is an OpenAI
-// GPT-5.x / GPT-6.x frontier model. Those are served only on the Mantle
+// GPT-5.x / GPT-6.x frontier model. Those are served on the OpenAI
 // Responses API, not Converse / InvokeModel. GPT-OSS (and every other
 // vendor) stay on Converse.
 func usesMantleResponses(modelID string) bool {
@@ -19,20 +19,44 @@ func usesMantleResponses(modelID string) bool {
 	return strings.HasPrefix(id, "openai.gpt-5") || strings.HasPrefix(id, "openai.gpt-6")
 }
 
-// mantleModelID turns a catalogue model_id (foundation id, geo inference
-// profile, or inference-profile ARN) into the id Mantle's Responses API
-// expects, e.g. "openai.gpt-5.6-sol".
-func mantleModelID(raw string) string {
+func profileID(raw string) string {
 	id := strings.TrimSpace(raw)
 	if i := strings.LastIndex(id, "/"); i >= 0 {
 		id = id[i+1:]
 	}
+	return id
+}
+
+func stripOpenAICRISPrefix(id string) string {
 	for _, prefix := range []string{"us.", "eu.", "apac.", "global.", "us-gov."} {
 		if strings.HasPrefix(id, prefix+"openai.") {
 			return strings.TrimPrefix(id, prefix)
 		}
 	}
 	return id
+}
+
+// mantleModelID turns a catalogue model_id (foundation id, geo inference
+// profile, or inference-profile ARN) into the foundation id, e.g.
+// "openai.gpt-5.6-sol". Used to decide which OpenAI family a row belongs
+// to. The wire model id is responsesModelID.
+func mantleModelID(raw string) string {
+	return stripOpenAICRISPrefix(profileID(raw))
+}
+
+func isGPT6(modelID string) bool {
+	return strings.HasPrefix(mantleModelID(modelID), "openai.gpt-6")
+}
+
+// responsesModelID is the id sent to Bedrock's OpenAI Responses API.
+// GPT-5.x on Mantle wants the foundation id. GPT-6 Astra on
+// bedrock-runtime wants the CRIS profile id, e.g. "global.openai.gpt-6-astra".
+func responsesModelID(raw string) string {
+	id := profileID(raw)
+	if isGPT6(id) {
+		return id
+	}
+	return stripOpenAICRISPrefix(id)
 }
 
 func chatRequestToConverse(req ChatRequest) ConverseRequest {
@@ -87,14 +111,18 @@ type responsesRequest struct {
 // and Bedrock does not retain the turn.
 func responsesBody(modelID string, req ConverseRequest) ([]byte, error) {
 	payload := responsesRequest{
-		Model:        mantleModelID(modelID),
+		Model:        responsesModelID(modelID),
 		Input:        converseToResponsesInput(req),
 		Instructions: req.System,
 		Stream:       req.Stream,
 		Store:        false,
 	}
 	payload.MaxOutputTokens = req.MaxTokens
-	if payload.MaxOutputTokens == nil || *payload.MaxOutputTokens < 1 {
+	minTokens := 1
+	if isGPT6(modelID) {
+		minTokens = 16
+	}
+	if payload.MaxOutputTokens == nil || *payload.MaxOutputTokens < minTokens {
 		maxTokens := 4096
 		payload.MaxOutputTokens = &maxTokens
 	}
