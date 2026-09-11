@@ -7,7 +7,9 @@ import (
 )
 
 func TestEmailBlocked(t *testing.T) {
-	t.Parallel()
+	SetDomains([]string{"shit.ralsei.lol", "beetleai.dev", "uberip.com"})
+	t.Cleanup(func() { SetDomains(nil) })
+
 	cases := []struct {
 		email   string
 		blocked bool
@@ -16,7 +18,7 @@ func TestEmailBlocked(t *testing.T) {
 		{"anyuser@shit.ralsei.lol", true},
 		{"ORBIT@SHIT.RALSEI.LOL", true},
 		{"bot@mail.shit.ralsei.lol", true},
-        {"user@beetleai.dev", true},
+		{"user@beetleai.dev", true},
 		{"anyone@beetleai.dev", true},
 		{"bot@mail.beetleai.dev", true},
 		{"user@uberip.com", true},

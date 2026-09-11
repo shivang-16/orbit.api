@@ -1,5 +1,0 @@
-# One domain per line. Emails at that domain and its subdomains are blocked.
-# Lines starting with # are ignored. A leading @ is optional.
-shit.ralsei.lol
-beetleai.dev
-uberip.com

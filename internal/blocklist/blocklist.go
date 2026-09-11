@@ -1,16 +1,13 @@
 package blocklist
 
 import (
-	_ "embed"
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/shivang-16/orbit.api/internal/model"
 )
-
-//go:embed domains.txt
-var domainsFile string
 
 const ContactEmail = "shivang@tryorbit.cloud"
 
@@ -19,13 +16,25 @@ const (
 	ErrorMessage = "You are blocked on this site. Please contact " + ContactEmail + " for more."
 )
 
-var domains = parseDomains(domainsFile)
+var mu sync.RWMutex
+var domains []string
 
-func parseDomains(raw string) []string {
+func NormalizeDomain(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || strings.HasPrefix(value, "#") {
+		return ""
+	}
+	value = strings.TrimPrefix(value, "@")
+	value = strings.ToLower(strings.TrimSpace(value))
+	value = strings.TrimPrefix(value, "*.")
+	return value
+}
+
+func SetDomains(values []string) {
 	seen := make(map[string]struct{})
-	out := make([]string, 0)
-	for line := range strings.SplitSeq(raw, "\n") {
-		domain := normalizeDomain(line)
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		domain := NormalizeDomain(value)
 		if domain == "" {
 			continue
 		}
@@ -35,18 +44,9 @@ func parseDomains(raw string) []string {
 		seen[domain] = struct{}{}
 		out = append(out, domain)
 	}
-	return out
-}
-
-func normalizeDomain(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" || strings.HasPrefix(value, "#") {
-		return ""
-	}
-	value = strings.TrimPrefix(value, "@")
-	value = strings.ToLower(strings.TrimSpace(value))
-	value = strings.TrimPrefix(value, "*.")
-	return value
+	mu.Lock()
+	domains = out
+	mu.Unlock()
 }
 
 func EmailBlocked(email string) bool {
@@ -67,6 +67,8 @@ func DomainBlocked(domain string) bool {
 	if domain == "" {
 		return false
 	}
+	mu.RLock()
+	defer mu.RUnlock()
 	for _, blocked := range domains {
 		if domain == blocked || strings.HasSuffix(domain, "."+blocked) {
 			return true

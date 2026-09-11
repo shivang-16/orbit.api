@@ -3,7 +3,9 @@ package httpserver
 import (
 	"context"
 	"net/http"
+	"time"
 
+	"github.com/shivang-16/orbit.api/internal/blocklist"
 	"github.com/shivang-16/orbit.api/internal/config"
 	apikeyController "github.com/shivang-16/orbit.api/internal/controller/apikey"
 	catalogueController "github.com/shivang-16/orbit.api/internal/controller/catalogue"
@@ -61,6 +63,8 @@ func Start(ctx context.Context, cfg config.Config) {
 		logger.Fatal(ctx, "postgres open failed", "error", err)
 	}
 	defer db.Close()
+
+	blocklist.StartReloader(ctx, db.DB(), 10*time.Second)
 
 	sqsClient, err := sqs.New(context.Background(), cfg)
 	if err != nil {
