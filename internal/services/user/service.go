@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/shivang-16/orbit.api/internal/blocklist"
 	"github.com/shivang-16/orbit.api/internal/infra/clerk"
 	"github.com/shivang-16/orbit.api/internal/logger"
 	authMiddleware "github.com/shivang-16/orbit.api/internal/middleware/auth"
@@ -47,6 +48,10 @@ func (s *Service) Sync(ctx context.Context) (*model.User, bool, error) {
 		return nil, false, fmt.Errorf("get user %s: %w", userID, err)
 	}
 	if existing != nil {
+		existing = s.applyBlocklist(ctx, existing)
+		if existing.Blocked {
+			return existing, false, nil
+		}
 		if err := s.ensureDefaultOrg(ctx, existing.ID); err != nil {
 			return nil, false, fmt.Errorf("ensure default org for %s: %w", userID, err)
 		}
@@ -64,13 +69,29 @@ func (s *Service) Sync(ctx context.Context) (*model.User, bool, error) {
 		Email:    profile.Email,
 		Name:     profile.Name,
 		ImageURL: profile.ImageURL,
+		Blocked:  blocklist.EmailBlocked(profile.Email),
 	})
 	if err != nil {
 		return nil, false, fmt.Errorf("create user %s: %w", userID, err)
 	}
 
-	s.sendWelcome(created)
+	if !created.Blocked {
+		s.sendWelcome(created)
+	}
 	return created, true, nil
+}
+
+func (s *Service) applyBlocklist(ctx context.Context, user *model.User) *model.User {
+	if user == nil || user.Blocked || !blocklist.EmailBlocked(user.Email) {
+		return user
+	}
+	if err := s.users.SetBlocked(ctx, user.ID, true); err != nil {
+		logger.Warn(ctx, "users/sync: mark blocked failed", "user_id", user.ID, "error", err)
+		user.Blocked = true
+		return user
+	}
+	user.Blocked = true
+	return user
 }
 
 func (s *Service) sendWelcome(user *model.User) {

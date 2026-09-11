@@ -8,7 +8,9 @@ import (
 
 	"github.com/clerk/clerk-sdk-go/v2/jwt"
 
+	"github.com/shivang-16/orbit.api/internal/blocklist"
 	"github.com/shivang-16/orbit.api/internal/logger"
+	"github.com/shivang-16/orbit.api/internal/model"
 	userRepository "github.com/shivang-16/orbit.api/internal/repositories/user"
 )
 
@@ -48,6 +50,9 @@ func (m *Middleware) Clerk(next http.Handler) http.Handler {
 				logger.Warn(ctx, "auth: user email lookup failed", "user_id", claims.Subject, "error", lookupErr)
 			} else if user != nil {
 				email = user.Email
+				if rejectBlockedUser(w, ctx, m.users, user) {
+					return
+				}
 			}
 		}
 		ctx = logger.SetUser(ctx, claims.Subject, email)
@@ -75,4 +80,22 @@ func writeUnauthorized(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusUnauthorized)
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
+}
+
+func rejectBlockedUser(w http.ResponseWriter, ctx context.Context, users *userRepository.Repository, user *model.User) bool {
+	if user == nil {
+		return false
+	}
+	blocked := user.Blocked || blocklist.EmailBlocked(user.Email)
+	if !blocked {
+		return false
+	}
+	if !user.Blocked && users != nil {
+		if err := users.SetBlocked(ctx, user.ID, true); err != nil {
+			logger.Warn(ctx, "auth: mark blocked failed", "user_id", user.ID, "error", err)
+		}
+	}
+	logger.Warn(ctx, "auth: blocked user", "user_id", user.ID, "email", user.Email)
+	blocklist.WriteForbidden(w)
+	return true
 }

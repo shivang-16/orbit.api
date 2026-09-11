@@ -8,6 +8,7 @@ type User struct {
 	Name       string    `json:"name" db:"name"`
 	ImageURL   string    `json:"image_url" db:"image_url"`
 	SuperAdmin bool      `json:"super_admin" db:"super_admin"`
+	Blocked    bool      `json:"blocked" db:"blocked"`
 	CreatedAt  time.Time `json:"created_at" db:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at" db:"updated_at"`
 }

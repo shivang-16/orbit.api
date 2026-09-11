@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/shivang-16/orbit.api/internal/blocklist"
 	"github.com/shivang-16/orbit.api/internal/logger"
 	userService "github.com/shivang-16/orbit.api/internal/services/user"
 )
@@ -27,6 +28,12 @@ func (c *Controller) Sync(w http.ResponseWriter, r *http.Request) {
 
 	if user != nil {
 		logger.SetUser(ctx, user.ID, user.Email)
+	}
+
+	if user != nil && user.Blocked {
+		logger.Warn(ctx, "users/sync blocked", "user_id", user.ID, "email", user.Email)
+		blocklist.WriteForbidden(w)
+		return
 	}
 
 	status := http.StatusOK

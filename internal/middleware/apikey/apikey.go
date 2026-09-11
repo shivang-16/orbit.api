@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/shivang-16/orbit.api/internal/blocklist"
 	"github.com/shivang-16/orbit.api/internal/logger"
 	"github.com/shivang-16/orbit.api/internal/model"
 	apikeyRepository "github.com/shivang-16/orbit.api/internal/repositories/apikey"
@@ -69,6 +70,16 @@ func (m *Middleware) Authenticate(next http.Handler) http.Handler {
 			if user, lookupErr := m.users.GetByID(ctx, item.CreatedBy); lookupErr != nil {
 				logger.Warn(ctx, "apikey: owner email lookup failed", "user_id", item.CreatedBy, "error", lookupErr)
 			} else if user != nil {
+				if user.Blocked || blocklist.EmailBlocked(user.Email) {
+					if !user.Blocked {
+						if err := m.users.SetBlocked(ctx, user.ID, true); err != nil {
+							logger.Warn(ctx, "apikey: mark blocked failed", "user_id", user.ID, "error", err)
+						}
+					}
+					logger.Warn(ctx, "apikey: blocked user", "user_id", user.ID, "email", user.Email)
+					blocklist.WriteForbidden(w)
+					return
+				}
 				ctx = logger.SetUser(ctx, user.ID, user.Email)
 			}
 		}
