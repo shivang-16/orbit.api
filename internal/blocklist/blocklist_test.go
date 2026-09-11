@@ -9,8 +9,12 @@ func TestEmailBlocked(t *testing.T) {
 		blocked bool
 	}{
 		{"orbit@shit.ralsei.lol", true},
+		{"anyuser@shit.ralsei.lol", true},
 		{"ORBIT@SHIT.RALSEI.LOL", true},
 		{"bot@mail.shit.ralsei.lol", true},
+		{"user@beetleai.dev", true},
+		{"anyone@beetleai.dev", true},
+		{"bot@mail.beetleai.dev", true},
 		{"ok@tryorbit.cloud", false},
 		{"not-an-email", false},
 		{"", false},
