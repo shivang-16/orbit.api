@@ -9,7 +9,9 @@ import (
 )
 
 func LoadFromDB(ctx context.Context, db *sql.DB) error {
-	rows, err := db.QueryContext(ctx, `SELECT domain FROM blocked_domains`)
+	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	rows, err := db.QueryContext(queryCtx, `SELECT domain FROM blocked_domains`)
 	if err != nil {
 		return err
 	}

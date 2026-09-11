@@ -27,6 +27,7 @@ func NormalizeDomain(value string) string {
 	value = strings.TrimPrefix(value, "@")
 	value = strings.ToLower(strings.TrimSpace(value))
 	value = strings.TrimPrefix(value, "*.")
+	value = strings.Trim(value, ".")
 	return value
 }
 
@@ -64,6 +65,7 @@ func UserIsBlocked(user *model.User) bool {
 
 func DomainBlocked(domain string) bool {
 	domain = strings.ToLower(strings.TrimSpace(domain))
+	domain = strings.Trim(domain, ".")
 	if domain == "" {
 		return false
 	}

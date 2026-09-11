@@ -69,7 +69,7 @@ func (s *Service) Sync(ctx context.Context) (*model.User, bool, error) {
 		Email:    profile.Email,
 		Name:     profile.Name,
 		ImageURL: profile.ImageURL,
-		Blocked:  blocklist.EmailBlocked(profile.Email),
+		Blocked:  s.emailDomainBlocked(ctx, profile.Email),
 	})
 	if err != nil {
 		return nil, false, fmt.Errorf("create user %s: %w", userID, err)
@@ -81,8 +81,17 @@ func (s *Service) Sync(ctx context.Context) (*model.User, bool, error) {
 	return created, true, nil
 }
 
+func (s *Service) emailDomainBlocked(ctx context.Context, email string) bool {
+	blocked, err := s.users.EmailDomainBlocked(ctx, email)
+	if err != nil {
+		logger.Error(ctx, "blocklist: db check failed", "error", err)
+		return blocklist.EmailBlocked(email)
+	}
+	return blocked
+}
+
 func (s *Service) applyBlocklist(ctx context.Context, user *model.User) *model.User {
-	if user == nil || user.Blocked || !blocklist.EmailBlocked(user.Email) {
+	if user == nil || user.Blocked || !s.emailDomainBlocked(ctx, user.Email) {
 		return user
 	}
 	if err := s.users.SetBlocked(ctx, user.ID, true); err != nil {
@@ -136,6 +145,12 @@ func (s *Service) createUserWithDefaultOrg(ctx context.Context, user *model.User
 	created, err := userRepository.NewRepository(tx).Create(ctx, user)
 	if err != nil {
 		return nil, fmt.Errorf("create user: %w", err)
+	}
+	if created.Blocked {
+		if err := tx.Commit(); err != nil {
+			return nil, fmt.Errorf("commit: %w", err)
+		}
+		return created, nil
 	}
 
 	org, err := orgs.CreateDefaultForUser(ctx, created.ID)

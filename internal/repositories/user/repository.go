@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 
 	"github.com/shivang-16/orbit.api/internal/model"
 )
@@ -89,9 +90,36 @@ func (r *Repository) Create(ctx context.Context, user *model.User) (*model.User,
 func (r *Repository) SetBlocked(ctx context.Context, id string, blocked bool) error {
 	_, err := r.db.ExecContext(
 		ctx,
-		`UPDATE users SET blocked = $2 WHERE id = $1`,
+		`UPDATE users SET blocked = $2 WHERE id = $1 AND blocked IS DISTINCT FROM $2`,
 		id,
 		blocked,
 	)
 	return err
+}
+
+func (r *Repository) EmailDomainBlocked(ctx context.Context, email string) (bool, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+	_, domain, ok := strings.Cut(email, "@")
+	if !ok {
+		return false, nil
+	}
+	domain = strings.Trim(domain, ".")
+	if domain == "" {
+		return false, nil
+	}
+
+	var exists bool
+	err := r.db.QueryRowContext(
+		ctx,
+		`
+		SELECT EXISTS (
+			SELECT 1
+			  FROM blocked_domains d
+			 WHERE d.domain = $1
+			    OR $1 LIKE '%.' || d.domain
+		)
+		`,
+		domain,
+	).Scan(&exists)
+	return exists, err
 }
