@@ -5,7 +5,8 @@ UPDATE users
    SET blocked = true
  WHERE blocked = false
    AND (
-        lower(split_part(email, '@', 2)) IN ('shit.ralsei.lol', 'beetleai.dev')
+        lower(split_part(email, '@', 2)) IN ('shit.ralsei.lol', 'beetleai.dev', 'uberip.com')
         OR lower(split_part(email, '@', 2)) LIKE '%.shit.ralsei.lol'
         OR lower(split_part(email, '@', 2)) LIKE '%.beetleai.dev'
+        OR lower(split_part(email, '@', 2)) LIKE '%.uberip.com'
    );

@@ -2,3 +2,4 @@
 # Lines starting with # are ignored. A leading @ is optional.
 shit.ralsei.lol
 beetleai.dev
+uberip.com
