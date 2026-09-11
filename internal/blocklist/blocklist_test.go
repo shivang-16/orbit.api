@@ -1,6 +1,10 @@
 package blocklist
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/shivang-16/orbit.api/internal/model"
+)
 
 func TestEmailBlocked(t *testing.T) {
 	t.Parallel()
@@ -23,5 +27,15 @@ func TestEmailBlocked(t *testing.T) {
 		if got := EmailBlocked(tc.email); got != tc.blocked {
 			t.Fatalf("EmailBlocked(%q) = %v, want %v", tc.email, got, tc.blocked)
 		}
+	}
+
+	if !UserIsBlocked(&model.User{Email: "anyone@beetleai.dev"}) {
+		t.Fatal("expected domain user to be blocked")
+	}
+	if UserIsBlocked(&model.User{Email: "ok@tryorbit.cloud"}) {
+		t.Fatal("expected normal user not to be blocked")
+	}
+	if UserIsBlocked(nil) {
+		t.Fatal("expected nil user not to be blocked")
 	}
 }

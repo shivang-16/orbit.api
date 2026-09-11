@@ -57,6 +57,10 @@ func (m *Middleware) Authenticate(next http.Handler) http.Handler {
 			return
 		}
 
+		if rejectBlockedKeyOwner(w, ctx, m.users, item) {
+			return
+		}
+
 		// Detached from the request context so cancellation on response
 		// flush doesn't race with (or skip) recording usage.
 		go func(id string) {
@@ -70,16 +74,6 @@ func (m *Middleware) Authenticate(next http.Handler) http.Handler {
 			if user, lookupErr := m.users.GetByID(ctx, item.CreatedBy); lookupErr != nil {
 				logger.Warn(ctx, "apikey: owner email lookup failed", "user_id", item.CreatedBy, "error", lookupErr)
 			} else if user != nil {
-				if user.Blocked || blocklist.EmailBlocked(user.Email) {
-					if !user.Blocked {
-						if err := m.users.SetBlocked(ctx, user.ID, true); err != nil {
-							logger.Warn(ctx, "apikey: mark blocked failed", "user_id", user.ID, "error", err)
-						}
-					}
-					logger.Warn(ctx, "apikey: blocked user", "user_id", user.ID, "email", user.Email)
-					blocklist.WriteForbidden(w)
-					return
-				}
 				ctx = logger.SetUser(ctx, user.ID, user.Email)
 			}
 		}
@@ -128,4 +122,44 @@ func writeError(w http.ResponseWriter, status int, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": message})
+}
+
+func rejectBlockedKeyOwner(w http.ResponseWriter, ctx context.Context, users *userRepository.Repository, item *model.APIKey) bool {
+	if users == nil || item == nil {
+		return false
+	}
+
+	creator, err := users.GetByID(ctx, item.CreatedBy)
+	if err != nil {
+		logger.Error(ctx, "apikey: owner lookup failed", "user_id", item.CreatedBy, "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to validate api key")
+		return true
+	}
+	owner, err := users.GetOwnerByOrganizationID(ctx, item.OrganizationID)
+	if err != nil {
+		logger.Error(ctx, "apikey: org owner lookup failed", "organization_id", item.OrganizationID, "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to validate api key")
+		return true
+	}
+
+	for _, user := range []*model.User{creator, owner} {
+		if !blocklist.UserIsBlocked(user) {
+			continue
+		}
+		if !user.Blocked {
+			if markErr := users.SetBlocked(ctx, user.ID, true); markErr != nil {
+				logger.Warn(ctx, "apikey: mark blocked failed", "user_id", user.ID, "error", markErr)
+			}
+		}
+		logger.Warn(ctx, "apikey: blocked user", "user_id", user.ID, "email", user.Email)
+		blocklist.WriteForbidden(w)
+		return true
+	}
+
+	if creator == nil && owner == nil {
+		logger.Warn(ctx, "apikey: missing owner", "organization_id", item.OrganizationID)
+		blocklist.WriteForbidden(w)
+		return true
+	}
+	return false
 }

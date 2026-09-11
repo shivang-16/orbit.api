@@ -44,16 +44,33 @@ func (m *Middleware) Clerk(next http.Handler) http.Handler {
 		}
 
 		ctx = context.WithValue(ctx, userIDKey, claims.Subject)
-		email := ""
+		var user *model.User
 		if m.users != nil {
-			if user, lookupErr := m.users.GetByID(ctx, claims.Subject); lookupErr != nil {
-				logger.Warn(ctx, "auth: user email lookup failed", "user_id", claims.Subject, "error", lookupErr)
-			} else if user != nil {
-				email = user.Email
-				if rejectBlockedUser(w, ctx, m.users, user) {
-					return
-				}
+			lookup, lookupErr := m.users.GetByID(ctx, claims.Subject)
+			if lookupErr != nil {
+				logger.Error(ctx, "auth: user lookup failed", "user_id", claims.Subject, "error", lookupErr)
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to authorize"})
+				return
 			}
+			user = lookup
+		}
+
+		if rejectBlockedUser(w, ctx, m.users, user) {
+			return
+		}
+
+		// New accounts may only sync. Every other Clerk route requires an
+		// existing, unblocked user so a blocked-domain signup cannot create
+		// orgs, keys, or playground inference before /users/sync runs.
+		if user == nil && !isUserSync(r) {
+			logger.Warn(ctx, "auth: user not synced", "user_id", claims.Subject)
+			writeUnauthorized(w)
+			return
+		}
+
+		email := ""
+		if user != nil {
+			email = user.Email
 		}
 		ctx = logger.SetUser(ctx, claims.Subject, email)
 		if orgID := strings.TrimSpace(r.Header.Get("X-Organization-Id")); orgID != "" {
@@ -76,18 +93,22 @@ func bearerToken(header string) string {
 	return strings.TrimSpace(strings.TrimPrefix(header, prefix))
 }
 
+func isUserSync(r *http.Request) bool {
+	return r.Method == http.MethodPost && strings.HasSuffix(strings.TrimRight(r.URL.Path, "/"), "/users/sync")
+}
+
 func writeUnauthorized(w http.ResponseWriter) {
+	writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+}
+
+func writeJSON(w http.ResponseWriter, status int, body map[string]string) {
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusUnauthorized)
-	_ = json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(body)
 }
 
 func rejectBlockedUser(w http.ResponseWriter, ctx context.Context, users *userRepository.Repository, user *model.User) bool {
-	if user == nil {
-		return false
-	}
-	blocked := user.Blocked || blocklist.EmailBlocked(user.Email)
-	if !blocked {
+	if !blocklist.UserIsBlocked(user) {
 		return false
 	}
 	if !user.Blocked && users != nil {

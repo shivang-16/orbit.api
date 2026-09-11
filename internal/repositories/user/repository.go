@@ -64,6 +64,17 @@ func (r *Repository) GetByID(ctx context.Context, id string) (*model.User, error
 	))
 }
 
+func (r *Repository) GetOwnerByOrganizationID(ctx context.Context, organizationID string) (*model.User, error) {
+	return scanUser(r.db.QueryRowContext(
+		ctx,
+		`SELECT `+userColumns+`
+		 FROM users u
+		 JOIN organizations o ON o.created_by = u.id
+		 WHERE o.id = $1`,
+		organizationID,
+	))
+}
+
 func (r *Repository) Create(ctx context.Context, user *model.User) (*model.User, error) {
 	return scanUser(r.db.QueryRowContext(
 		ctx,

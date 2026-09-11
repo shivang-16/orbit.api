@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+
+	"github.com/shivang-16/orbit.api/internal/model"
 )
 
 //go:embed domains.txt
@@ -54,6 +56,10 @@ func EmailBlocked(email string) bool {
 		return false
 	}
 	return DomainBlocked(domain)
+}
+
+func UserIsBlocked(user *model.User) bool {
+	return user != nil && (user.Blocked || EmailBlocked(user.Email))
 }
 
 func DomainBlocked(domain string) bool {
