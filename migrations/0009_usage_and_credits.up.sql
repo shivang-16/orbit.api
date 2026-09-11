@@ -3,6 +3,9 @@ ALTER TABLE organizations
     ADD COLUMN IF NOT EXISTS credits_used_micros BIGINT NOT NULL DEFAULT 0,
     ADD COLUMN IF NOT EXISTS credits_remaining_micros BIGINT NOT NULL DEFAULT 0;
 
+-- Replay-safe: remaining may be negative after 0016 (one request can
+-- cross the low-credits threshold). Re-adding remaining >= 0 here fails
+-- on any existing overdrawn org when migrate re-runs every .up.sql.
 ALTER TABLE organizations
     DROP CONSTRAINT IF EXISTS organizations_credits_non_negative;
 ALTER TABLE organizations
@@ -10,7 +13,6 @@ ALTER TABLE organizations
     CHECK (
         credits_granted_micros >= 0
         AND credits_used_micros >= 0
-        AND credits_remaining_micros >= 0
     );
 
 CREATE TABLE IF NOT EXISTS inference_requests (
