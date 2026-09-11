@@ -129,11 +129,13 @@ func (s *Service) createUserWithDefaultOrg(ctx context.Context, user *model.User
 		return nil, fmt.Errorf("commit: %w", err)
 	}
 
-	logger.Info(ctx, "users/sync: granted signup credits",
-		"user_id", created.ID,
-		"org_id", org.ID,
-		"amount_micros", s.signupCredits,
-	)
+	if s.signupCredits > 0 {
+		logger.Info(ctx, "users/sync: granted signup credits",
+			"user_id", created.ID,
+			"org_id", org.ID,
+			"amount_micros", s.signupCredits,
+		)
+	}
 
 	return created, nil
 }
@@ -181,6 +183,9 @@ func (s *Service) ensureDefaultOrg(ctx context.Context, userID string) error {
 }
 
 func grantSignupCredits(ctx context.Context, tx *sql.Tx, userID, organizationID string, amountMicros int64) error {
+	if amountMicros <= 0 {
+		return nil
+	}
 	if err := billingRepository.GrantOn(ctx, tx, billingRepository.GrantParams{
 		OrganizationID: organizationID,
 		AmountMicros:   amountMicros,

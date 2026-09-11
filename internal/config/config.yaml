@@ -8,7 +8,7 @@ server:
   inference_timeout_seconds: 300
 
 credits:
-  signup_micros: 2000000
+  signup_micros: 0
   # $0.01 — a request may start only if remaining covers this floor and the hold.
   low_balance_threshold_micros: 10000
   default_output_tokens: 4096

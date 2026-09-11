@@ -65,8 +65,8 @@ func loadFileConfig() fileConfig {
 }
 
 func (f fileConfig) validate() error {
-	if f.Credits.SignupMicros < 1 {
-		return fmt.Errorf("credits.signup_micros must be >= 1")
+	if f.Credits.SignupMicros < 0 {
+		return fmt.Errorf("credits.signup_micros must be >= 0")
 	}
 	if f.Credits.LowBalanceThresholdMicros < 1 {
 		return fmt.Errorf("credits.low_balance_threshold_micros must be >= 1")

@@ -56,18 +56,16 @@ jobs:
 
       - name: Start or create PM2 services
         run: |
-          if pm2 describe orbit.api >/dev/null 2>&1; then
-            pm2 reload orbit.api --update-env
-          else
-            pm2 start ecosystem.config.js --only orbit.api
-          fi
+          # After a reboot / instance-type change the daemon is empty even
+          # if ~/.pm2/dump.pm2 still exists. Resurrect first; ignore if
+          # there is nothing saved yet.
+          pm2 resurrect || true
 
-          if pm2 describe orbit.billing >/dev/null 2>&1; then
-            pm2 reload orbit.billing --update-env
-          else
-            pm2 start ecosystem.config.js --only orbit.billing
-          fi
+          # Starts missing apps, reloads existing ones. Covers a wiped
+          # process list after a new instance.
+          pm2 startOrReload ecosystem.config.js --update-env
 
+          # Persist so the next reboot can resurrect again.
           pm2 save
           pm2 status
 

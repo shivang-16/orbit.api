@@ -5,7 +5,7 @@ import "testing"
 func TestLoadFileConfig(t *testing.T) {
 	cfg := Load()
 
-	if cfg.Credits.SignupMicros != 2_000_000 {
+	if cfg.Credits.SignupMicros != 0 {
 		t.Fatalf("signup_micros = %d", cfg.Credits.SignupMicros)
 	}
 	if cfg.Credits.LowBalanceThresholdMicros != 10_000 {
