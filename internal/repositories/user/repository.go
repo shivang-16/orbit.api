@@ -22,6 +22,7 @@ func NewRepository(db dbTX) *Repository {
 }
 
 const userColumns = `id, email, name, image_url, super_admin, blocked, created_at, updated_at`
+const userColumnsAliased = `u.id, u.email, u.name, u.image_url, u.super_admin, u.blocked, u.created_at, u.updated_at`
 
 func scanUser(row *sql.Row) (*model.User, error) {
 	user := model.User{}
@@ -67,7 +68,7 @@ func (r *Repository) GetByID(ctx context.Context, id string) (*model.User, error
 func (r *Repository) GetOwnerByOrganizationID(ctx context.Context, organizationID string) (*model.User, error) {
 	return scanUser(r.db.QueryRowContext(
 		ctx,
-		`SELECT `+userColumns+`
+		`SELECT `+userColumnsAliased+`
 		 FROM users u
 		 JOIN organizations o ON o.created_by = u.id
 		 WHERE o.id = $1`,
